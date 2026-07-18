@@ -94,6 +94,7 @@ button { font-family: inherit; cursor: pointer; }
 .badge-old { background: #f0f2f5; color: var(--gray); }
 .badge-warn { background: #fde7e6; color: var(--red); }
 .badge-photo { background: #fdf1dc; color: var(--amber); }
+.badge-sample { background: #e7effe; color: var(--brand); }
 
 /* ---- add hint ---- */
 .add-hint {

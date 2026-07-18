@@ -115,12 +115,39 @@ function shortYen(n) {
 
 // ---- データ取得 & 描画 ----
 async function loadLots() {
-  const params = new URLSearchParams({ sort: state.sort, hours: String(state.hours) });
+  // 「近い順」はサーバに無いのでサーバ側は updated で取得し、クライアントで距離ソートする
+  const serverSort = state.sort === 'distance' ? 'updated' : state.sort;
+  const params = new URLSearchParams({ sort: serverSort, hours: String(state.hours) });
+
+  // ズームインしている時は表示範囲(bbox)で絞り込み、周辺だけを取得
+  if (map.getZoom() >= 13) {
+    const b = map.getBounds();
+    params.set('bbox', [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(','));
+  }
+
   const res = await fetch('/api/lots?' + params.toString());
   const json = await res.json();
   state.lots = json.lots;
+
+  // 近い順（現在地がある時のみ有効。無ければ概算順にフォールバック）
+  if (state.sort === 'distance') {
+    if (state.userPos) {
+      state.lots.sort((a, b) => distanceKm(state.userPos, a) - distanceKm(state.userPos, b));
+    } else {
+      const nl = (v) => (v == null ? Infinity : v);
+      state.lots.sort((a, b) => nl(a.estimate) - nl(b.estimate));
+    }
+  }
+
   renderMarkers();
   renderList();
+}
+
+// 地図移動で周辺を再取得（デバウンス）
+let _moveTimer = null;
+function scheduleReload() {
+  clearTimeout(_moveTimer);
+  _moveTimer = setTimeout(loadLots, 400);
 }
 
 function renderMarkers() {
@@ -142,6 +169,7 @@ function popupHtml(lot) {
     ? `<img class="popup-photo" src="/uploads/${lot.photo}" alt="料金看板" data-photo="${lot.photo}" />`
     : '';
   const noPhoto = !lot.photo ? '<span class="badge badge-photo">📷 写真なし</span>' : '';
+  const sample = lot.source === 'osm' ? '<span class="badge badge-sample">🔰 サンプル・未確認</span>' : '';
   return `
     <div class="popup" data-id="${lot.id}">
       ${photo}
@@ -152,6 +180,7 @@ function popupHtml(lot) {
       ${lot.address ? `<p class="popup-note">📍 ${escapeHtml(lot.address)}</p>` : ''}
       <div class="popup-meta">
         <span class="badge ${fresh.cls}">${fresh.label}</span>
+        ${sample}
         ${noPhoto}
         ${dist ? `<span>🚶 ${dist}</span>` : ''}
         ${lot.confirm_count ? `<span>✅ ${lot.confirm_count}</span>` : ''}
@@ -194,6 +223,7 @@ function renderList() {
         </div>
         <div class="lot-meta">
           <span class="badge ${fresh.cls}">${fresh.label}</span>
+          ${lot.source === 'osm' ? '<span class="badge badge-sample">🔰 サンプル</span>' : ''}
           ${!lot.photo ? '<span class="badge badge-photo">📷 写真なし</span>' : ''}
           ${dist ? `<span>🚶 ${dist}</span>` : ''}
           ${lot.confirm_count ? `<span>✅ ${lot.confirm_count}</span>` : ''}
@@ -209,7 +239,8 @@ function renderList() {
 }
 
 function sortLabel() {
-  return { estimate: '概算が安い順', hourly: '時間料金順', max: '最大料金順', updated: '新しい順' }[state.sort];
+  if (state.sort === 'distance' && !state.userPos) return '概算が安い順';
+  return { distance: '近い順', estimate: '概算が安い順', hourly: '時間料金順', max: '最大料金順', updated: '新しい順' }[state.sort];
 }
 
 function escapeHtml(s) {
@@ -234,23 +265,43 @@ async function vote(id, kind) {
 }
 
 // ---- 現在地 ----
-function locate() {
-  if (!navigator.geolocation) return toast('この端末では現在地を取得できません');
-  toast('現在地を取得中…');
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      const { latitude: lat, longitude: lng } = pos.coords;
-      state.userPos = { lat, lng };
-      map.setView([lat, lng], 16);
-      if (userMarker) map.removeLayer(userMarker);
-      userMarker = L.circleMarker([lat, lng], {
-        radius: 8, color: '#fff', weight: 2, fillColor: '#1573ff', fillOpacity: 1,
-      }).addTo(map).bindPopup('現在地');
-      renderList(); // 距離を反映
-    },
-    () => toast('現在地を取得できませんでした（位置情報の許可を確認してください）'),
-    { enableHighAccuracy: true, timeout: 8000 }
-  );
+// options.initial=true のときは「近い順」を既定にして周辺を初期表示する
+function locate(options = {}) {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      if (!options.initial) toast('この端末では現在地を取得できません');
+      return resolve(false);
+    }
+    if (!options.initial) toast('現在地を取得中…');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude: lat, longitude: lng } = pos.coords;
+        state.userPos = { lat, lng };
+        map.setView([lat, lng], 16);
+        if (userMarker) map.removeLayer(userMarker);
+        userMarker = L.circleMarker([lat, lng], {
+          radius: 8, color: '#fff', weight: 2, fillColor: '#1573ff', fillOpacity: 1,
+        }).addTo(map).bindPopup('現在地');
+        if (options.initial) {
+          // 初回は「近い順」に切り替えて周辺を初期表示
+          state.sort = 'distance';
+          setActiveSortButton('distance');
+        }
+        loadLots(); // moveend でも走るが、距離ソート反映のため明示的に
+        resolve(true);
+      },
+      () => {
+        if (!options.initial) toast('現在地を取得できませんでした（位置情報の許可を確認してください）');
+        resolve(false);
+      },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  });
+}
+
+function setActiveSortButton(sort) {
+  $('#sort-seg').querySelectorAll('button').forEach((x) =>
+    x.classList.toggle('active', x.dataset.sort === sort));
 }
 
 // ---- 登録モード ----
@@ -380,8 +431,9 @@ $('#lot-form').addEventListener('submit', async (e) => {
 
   try {
     const editing = state.editingId;
+    // 編集も POST（PHP は PUT+multipart で $_FILES が空になるため）
     const url = editing ? `/api/lots/${editing}` : '/api/lots';
-    const res = await fetch(url, { method: editing ? 'PUT' : 'POST', body: fd });
+    const res = await fetch(url, { method: 'POST', body: fd });
     const json = await res.json();
     if (!res.ok) {
       errEl.textContent = json.error || '保存に失敗しました';
@@ -443,14 +495,20 @@ $('#hours-seg').addEventListener('click', (e) => {
   loadLots();
 });
 
-$('#btn-locate').addEventListener('click', locate);
+$('#btn-locate').addEventListener('click', () => locate());
 $('#btn-add').addEventListener('click', startAddMode);
 $('#btn-cancel-add').addEventListener('click', stopAddMode);
 $('#modal-close').addEventListener('click', closeForm);
 $('#btn-form-cancel').addEventListener('click', closeForm);
 $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeForm(); });
 
+// 地図を動かしたら、その範囲の駐車場を再取得（周辺表示の追従）
+map.on('moveend', scheduleReload);
+
 // ---- 起動 ----
-loadLots();
-// 初回に現在地を試みる（許可されなければ東京駅のまま）
-if (navigator.geolocation) locate();
+// まず現在地の取得を試み、その付近の駐車場を「近い順」で初期表示する。
+// 位置が取れなければ既定表示（東京駅周辺）のまま概算順で表示。
+(async () => {
+  const ok = await locate({ initial: true });
+  if (!ok) loadLots();
+})();
