@@ -70,29 +70,35 @@ function freshness(lot) {
   if (d == null) return { cls: 'badge-old', label: '更新日不明' };
   if (d <= 30) return { cls: 'badge-fresh', label: `${relTime(ref)}に更新` };
   if (d <= 90) return { cls: 'badge-mid', label: `${relTime(ref)}に更新` };
-  return { cls: 'badge-old', label: `⚠️ ${relTime(ref)}（古い可能性）` };
+  return { cls: 'badge-old', label: `${relTime(ref)}に更新` }; // 3か月超は trust 側で「要更新」表示
 }
 
-// 信頼度バッジ（サーバの trust をもとに）。level: unconfirmed|has-info|confirmed|certified|flagged
+// 信頼度バッジ（サーバの trust をもとに）。level: unconfirmed|has-info|confirmed|certified|flagged|stale
 function trustBadge(lot) {
   const t = lot.trust;
   if (!t) return '';
-  const cls = { flagged: 'badge-warn', certified: 'badge-cert', confirmed: 'badge-confirmed', 'has-info': 'badge-info', unconfirmed: 'badge-old' }[t.level] || 'badge-old';
+  const cls = { flagged: 'badge-warn', stale: 'badge-mid', certified: 'badge-cert', confirmed: 'badge-confirmed', 'has-info': 'badge-info', unconfirmed: 'badge-old' }[t.level] || 'badge-old';
   return `<span class="badge ${cls}">${escapeHtml(t.label)}</span>`;
 }
 
-// 「あと N 人で〜」の合意形成ヒント
+// 合意形成 / 再確認をうながすヒント
 function trustHint(lot) {
   const t = lot.trust;
-  if (!t || t.next == null) return '';
+  if (!t) return '';
+  // 3か月以上更新なし → 再確認を促す
+  if (t.level === 'stale') {
+    return `<p class="popup-note">🕒 3か月以上更新がありません。現地で確認して「✅正しい」を押すと最新になります</p>`;
+  }
+  if (t.next == null) return '';
   const goal = t.level === 'confirmed' ? '認定' : 'みんなが確認';
   return `<p class="popup-note">🤝 あと ${t.next} 人の「✅正しい」で「${goal}」になります</p>`;
 }
 
-// ピン色: 信頼度（要確認=赤/認定=金）を優先し、それ以外は料金帯で色分け
+// ピン色: 信頼度（要確認=赤/要更新=灰/認定=金）を優先し、それ以外は料金帯で色分け
 function pinClass(lot) {
   const level = lot.trust && lot.trust.level;
   if (level === 'flagged') return 'pin-red';
+  if (level === 'stale') return 'pin-gray';
   if (level === 'certified') return 'pin-gold';
   return priceColor(lot);
 }
