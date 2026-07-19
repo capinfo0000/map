@@ -152,7 +152,10 @@ if (preg_match('#^/lots/(\d+)/(confirm|report)$#', $route, $m) && $method === 'P
         json_error('client_token が必要です', 400);
     }
     $db->upsertUser($token); // 確認/報告した人も貢献として記録
-    $result = $db->addReport($id, $token, $kind, $body['comment'] ?? null);
+    // 確認時、その駐車場が「要更新（3か月以上）」だったかを記録（鮮度キーパー用）
+    $target = $db->getLot($id);
+    $wasStale = $target ? !empty(trustLevel($target)['stale']) : false;
+    $result = $db->addReport($id, $token, $kind, $body['comment'] ?? null, $wasStale);
     if (!$result['ok'] && ($result['reason'] ?? '') === 'notfound') {
         json_error('not found', 404);
     }

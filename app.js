@@ -352,7 +352,8 @@ function openProfile() {
     ${statBox(s.posts, '登録した駐車場')}
     ${statBox(s.photoPosts, '写真つき投稿')}
     ${statBox(s.votes, '確認・報告')}
-    ${statBox(s.confirmsReceived, '自分の情報が確認された')}`;
+    ${statBox(s.confirmsReceived, '自分の情報が確認された')}
+    ${statBox(s.refreshes ?? 0, '古い情報を再確認')}`;
 
   $('#badge-grid').innerHTML = me.badges.map((b) =>
     `<div class="badge-item ${b.earned ? 'earned' : 'locked'}">${b.earned ? '' : '🔒 '}${escapeHtml(b.label)}</div>`

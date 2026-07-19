@@ -11,6 +11,7 @@ const PT_POST            = 5; // 駐車場を1件登録
 const PT_PHOTO           = 3; // 写真付き投稿（登録ポイントに加算）
 const PT_VOTE            = 1; // 確認/報告を1回
 const PT_CONFIRM_RECEIVED = 2; // 自分の情報が1回確認された
+const PT_REFRESH_BONUS   = 2; // 「要更新」の情報を再確認して鮮度を保った（確認ポイントに加算）
 
 // ランクのしきい値（ポイント）
 const RANKS = [
@@ -26,15 +27,17 @@ const RANKS = [
  */
 function reputation(array $stats): array
 {
-    $posts   = (int)($stats['posts'] ?? 0);
-    $photos  = (int)($stats['photoPosts'] ?? 0);
-    $votes   = (int)($stats['votes'] ?? 0);
-    $recv    = (int)($stats['confirmsReceived'] ?? 0);
+    $posts    = (int)($stats['posts'] ?? 0);
+    $photos   = (int)($stats['photoPosts'] ?? 0);
+    $votes    = (int)($stats['votes'] ?? 0);
+    $recv     = (int)($stats['confirmsReceived'] ?? 0);
+    $refreshes = (int)($stats['refreshes'] ?? 0);
 
     $points = $posts * PT_POST
         + $photos * PT_PHOTO
         + $votes * PT_VOTE
-        + $recv * PT_CONFIRM_RECEIVED;
+        + $recv * PT_CONFIRM_RECEIVED
+        + $refreshes * PT_REFRESH_BONUS;
 
     // 現在ランクと次ランク
     $current = RANKS[0];
@@ -51,6 +54,7 @@ function reputation(array $stats): array
         badge('five_posts',  '🏘️ 5件登録',          $posts >= 5),
         badge('photographer','📸 写真マスター',      $photos >= 10),
         badge('verifier',    '🔍 検証者',           $votes >= 20),
+        badge('freshkeeper', '🕒 鮮度キーパー',      $refreshes >= 3),
         badge('trusted',     '🤝 信頼される投稿者',  $recv >= 50),
     ];
 
@@ -67,6 +71,7 @@ function reputation(array $stats): array
         'stats'  => [
             'posts' => $posts, 'photoPosts' => $photos,
             'votes' => $votes, 'confirmsReceived' => $recv,
+            'refreshes' => $refreshes,
         ],
     ];
 }

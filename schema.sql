@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS reports (
     client_token VARCHAR(80) NOT NULL,
     kind         VARCHAR(10) NOT NULL,
     comment      VARCHAR(500),
+    was_stale    INT NOT NULL DEFAULT 0,
     created_at   VARCHAR(30) NOT NULL,
     UNIQUE KEY uniq_vote (lot_id, client_token, kind),
     INDEX idx_reports_lot (lot_id)

@@ -86,6 +86,7 @@ class DB
                 client_token VARCHAR(80) NOT NULL,
                 kind         VARCHAR(10) NOT NULL,
                 comment      VARCHAR(500),
+                was_stale    INT NOT NULL DEFAULT 0,
                 created_at   VARCHAR(30) NOT NULL,
                 UNIQUE (lot_id, client_token, kind)
             )$engine
@@ -99,11 +100,16 @@ class DB
             )$engine
         ");
 
-        // 既存 DB 向け: created_by_token 列が無ければ追加（重複エラーは無視）
-        try {
-            $this->pdo->exec('ALTER TABLE lots ADD COLUMN created_by_token VARCHAR(80)');
-        } catch (PDOException $e) {
-            // 既に存在する場合は無視
+        // 既存 DB 向け: 列が無ければ追加（重複エラーは無視）
+        foreach ([
+            'ALTER TABLE lots ADD COLUMN created_by_token VARCHAR(80)',
+            'ALTER TABLE reports ADD COLUMN was_stale INT NOT NULL DEFAULT 0',
+        ] as $sql) {
+            try {
+                $this->pdo->exec($sql);
+            } catch (PDOException $e) {
+                // 既に存在する場合は無視
+            }
         }
 
         // インデックス（存在しても致命的でないよう try）
@@ -210,7 +216,7 @@ class DB
      * confirm / report を記録。1トークン1票（UNIQUE 制約）。
      * @return array{ok:bool, reason?:string, lot?:array}
      */
-    public function addReport(int $lotId, string $token, string $kind, ?string $comment): array
+    public function addReport(int $lotId, string $token, string $kind, ?string $comment, bool $wasStale = false): array
     {
         $lot = $this->getLot($lotId);
         if (!$lot) {
@@ -220,10 +226,11 @@ class DB
         try {
             $this->pdo->beginTransaction();
             $ins = $this->pdo->prepare("
-                INSERT INTO reports (lot_id, client_token, kind, comment, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO reports (lot_id, client_token, kind, comment, was_stale, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
             ");
-            $ins->execute([$lotId, $token, $kind, $comment, $now]);
+            // 「要更新」だった駐車場を確認で復活させた場合に鮮度キーパーの実績として記録
+            $ins->execute([$lotId, $token, $kind, $comment, ($kind === 'confirm' && $wasStale) ? 1 : 0, $now]);
 
             if ($kind === 'confirm') {
                 $this->pdo->prepare(
@@ -297,6 +304,7 @@ class DB
             'photoPosts'       => $one("SELECT COUNT(*) AS c FROM lots WHERE created_by_token = ? AND photo IS NOT NULL AND photo <> ''", [$token]),
             'votes'            => $one('SELECT COUNT(*) AS c FROM reports WHERE client_token = ?', [$token]),
             'confirmsReceived' => $one('SELECT COALESCE(SUM(confirm_count),0) AS c FROM lots WHERE created_by_token = ?', [$token]),
+            'refreshes'        => $one("SELECT COUNT(*) AS c FROM reports WHERE client_token = ? AND kind = 'confirm' AND was_stale = 1", [$token]),
         ];
     }
 
