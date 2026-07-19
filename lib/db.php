@@ -70,6 +70,7 @@ class DB
                 photo             VARCHAR(255),
                 nickname          VARCHAR(40),
                 source            VARCHAR(20),
+                created_by_token  VARCHAR(80),
                 created_at        VARCHAR(30) NOT NULL,
                 updated_at        VARCHAR(30) NOT NULL,
                 confirm_count     INT NOT NULL DEFAULT 0,
@@ -89,6 +90,21 @@ class DB
                 UNIQUE (lot_id, client_token, kind)
             )$engine
         ");
+
+        $this->pdo->exec("
+            CREATE TABLE IF NOT EXISTS users (
+                token      VARCHAR(80) PRIMARY KEY,
+                nickname   VARCHAR(40),
+                created_at VARCHAR(30) NOT NULL
+            )$engine
+        ");
+
+        // 既存 DB 向け: created_by_token 列が無ければ追加（重複エラーは無視）
+        try {
+            $this->pdo->exec('ALTER TABLE lots ADD COLUMN created_by_token VARCHAR(80)');
+        } catch (PDOException $e) {
+            // 既に存在する場合は無視
+        }
 
         // インデックス（存在しても致命的でないよう try）
         foreach ([
@@ -123,9 +139,9 @@ class DB
         $now = self::nowIso();
         $stmt = $this->pdo->prepare("
             INSERT INTO lots (name, lat, lng, address, hourly_rate, max_rate, fee_note,
-                              capacity, photo, nickname, source, created_at, updated_at)
+                              capacity, photo, nickname, source, created_by_token, created_at, updated_at)
             VALUES (:name, :lat, :lng, :address, :hourly_rate, :max_rate, :fee_note,
-                    :capacity, :photo, :nickname, :source, :created_at, :updated_at)
+                    :capacity, :photo, :nickname, :source, :created_by_token, :created_at, :updated_at)
         ");
         $stmt->execute([
             ':name' => $d['name'], ':lat' => $d['lat'], ':lng' => $d['lng'],
@@ -133,6 +149,7 @@ class DB
             ':max_rate' => $d['max_rate'], ':fee_note' => $d['fee_note'],
             ':capacity' => $d['capacity'], ':photo' => $d['photo'],
             ':nickname' => $d['nickname'], ':source' => $d['source'] ?? 'user',
+            ':created_by_token' => $d['created_by_token'] ?? null,
             ':created_at' => $now, ':updated_at' => $now,
         ]);
         return $this->getLot((int)$this->pdo->lastInsertId());
@@ -234,6 +251,53 @@ class DB
     public function countLots(): int
     {
         return (int)$this->pdo->query('SELECT COUNT(*) AS c FROM lots')->fetch()['c'];
+    }
+
+    // ---- users（貢献度・匿名トークン単位） ----
+
+    /** 匿名ユーザーを登録/更新。nickname は空でなければ更新。 */
+    public function upsertUser(string $token, ?string $nickname = null): void
+    {
+        if ($token === '') {
+            return;
+        }
+        $exists = $this->pdo->prepare('SELECT token, nickname FROM users WHERE token = ?');
+        $exists->execute([$token]);
+        $row = $exists->fetch();
+        if ($row) {
+            if ($nickname !== null && $nickname !== '' && $nickname !== $row['nickname']) {
+                $this->pdo->prepare('UPDATE users SET nickname = ? WHERE token = ?')
+                    ->execute([$nickname, $token]);
+            }
+        } else {
+            $this->pdo->prepare('INSERT INTO users (token, nickname, created_at) VALUES (?, ?, ?)')
+                ->execute([$token, $nickname ?: null, self::nowIso()]);
+        }
+    }
+
+    /**
+     * トークンの貢献指標を集計。
+     * @return array{nickname:?string, posts:int, photoPosts:int, votes:int, confirmsReceived:int}
+     */
+    public function getUserStats(string $token): array
+    {
+        $one = function (string $sql, array $args) {
+            $st = $this->pdo->prepare($sql);
+            $st->execute($args);
+            return (int)($st->fetch()['c'] ?? 0);
+        };
+
+        $u = $this->pdo->prepare('SELECT nickname FROM users WHERE token = ?');
+        $u->execute([$token]);
+        $urow = $u->fetch();
+
+        return [
+            'nickname'         => $urow['nickname'] ?? null,
+            'posts'            => $one('SELECT COUNT(*) AS c FROM lots WHERE created_by_token = ?', [$token]),
+            'photoPosts'       => $one("SELECT COUNT(*) AS c FROM lots WHERE created_by_token = ? AND photo IS NOT NULL AND photo <> ''", [$token]),
+            'votes'            => $one('SELECT COUNT(*) AS c FROM reports WHERE client_token = ?', [$token]),
+            'confirmsReceived' => $one('SELECT COALESCE(SUM(confirm_count),0) AS c FROM lots WHERE created_by_token = ?', [$token]),
+        ];
     }
 
     private function isUniqueViolation(PDOException $e): bool

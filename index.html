@@ -14,6 +14,7 @@
     <header class="topbar">
       <h1 class="brand">🅿️ みんなの駐車場マップ</h1>
       <div class="topbar-actions">
+        <button id="rank-chip" class="rank-chip" title="あなたの貢献ランク">🥉 ブロンズ<span class="rank-pts">0pt</span></button>
         <button id="btn-locate" class="icon-btn" title="現在地へ">📍 現在地</button>
         <button id="btn-add" class="primary-btn">＋ 駐車場を登録</button>
       </div>
@@ -120,6 +121,29 @@
           <button type="submit" id="btn-submit" class="primary-btn">登録する</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- プロフィール（貢献ランク） -->
+  <div id="profile" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>あなたの貢献</h2>
+        <button id="profile-close" class="icon-btn">✕</button>
+      </div>
+      <div class="profile-rank">
+        <div id="profile-rank-label" class="profile-rank-label">🥉 ブロンズ</div>
+        <div id="profile-points" class="profile-points">0 pt</div>
+      </div>
+      <div class="progress"><div id="progress-bar" class="progress-bar"></div></div>
+      <p id="profile-next" class="profile-next"></p>
+
+      <div class="profile-stats" id="profile-stats"></div>
+
+      <h3 class="profile-h3">バッジ</h3>
+      <div class="badge-grid" id="badge-grid"></div>
+
+      <p class="profile-note">確認・登録・写真添付などで貢献するとランクが上がります。あなたが登録した情報を他の人が「✅正しい」と確認するとさらにポイントが入ります。</p>
     </div>
   </div>
 

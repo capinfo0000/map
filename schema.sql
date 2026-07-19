@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS lots (
     photo             VARCHAR(255),
     nickname          VARCHAR(40),
     source            VARCHAR(20),
+    created_by_token  VARCHAR(80),
     created_at        VARCHAR(30) NOT NULL,
     updated_at        VARCHAR(30) NOT NULL,
     confirm_count     INT NOT NULL DEFAULT 0,
@@ -32,4 +33,10 @@ CREATE TABLE IF NOT EXISTS reports (
     created_at   VARCHAR(30) NOT NULL,
     UNIQUE KEY uniq_vote (lot_id, client_token, kind),
     INDEX idx_reports_lot (lot_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS users (
+    token      VARCHAR(80) PRIMARY KEY,
+    nickname   VARCHAR(40),
+    created_at VARCHAR(30) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

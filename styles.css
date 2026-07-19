@@ -50,6 +50,30 @@ button { font-family: inherit; cursor: pointer; }
   padding: 9px 12px; font-size: 14px; font-weight: 600;
 }
 .link-btn { background: none; border: none; color: var(--brand); font-weight: 600; padding: 0 6px; }
+.rank-chip {
+  background: linear-gradient(135deg, #fff6e0, #ffe9c2); color: #8a5a00; border: 1px solid #f2d79a;
+  border-radius: 999px; padding: 7px 12px; font-size: 13px; font-weight: 700;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.rank-chip .rank-pts { background: rgba(255,255,255,.7); border-radius: 999px; padding: 1px 7px; font-size: 11px; }
+
+/* ---- profile panel ---- */
+.profile-rank { display: flex; align-items: baseline; justify-content: space-between; margin: 6px 0 10px; }
+.profile-rank-label { font-size: 22px; font-weight: 800; }
+.profile-points { font-size: 18px; font-weight: 800; color: var(--brand); }
+.progress { height: 10px; background: #eef1f5; border-radius: 999px; overflow: hidden; }
+.progress-bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--brand), #46a0ff); border-radius: 999px; transition: width .5s; }
+.profile-next { font-size: 13px; color: var(--muted); margin: 8px 0 4px; }
+.profile-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 14px 0; }
+.stat-box { background: #f8fafc; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.stat-box .stat-num { font-size: 20px; font-weight: 800; }
+.stat-box .stat-label { font-size: 12px; color: var(--muted); }
+.profile-h3 { font-size: 14px; margin: 12px 0 8px; }
+.badge-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.badge-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); font-size: 13px; font-weight: 600; }
+.badge-item.earned { background: #e5f6ec; border-color: #bfe6cd; color: #1a7a44; }
+.badge-item.locked { background: #f6f7f9; color: var(--gray); }
+.profile-note { font-size: 12px; color: var(--muted); margin-top: 14px; line-height: 1.6; }
 
 /* ---- controls ---- */
 .controls {
@@ -162,6 +186,13 @@ button { font-family: inherit; cursor: pointer; }
 .pin-amber { background: var(--amber); }
 .pin-red { background: var(--red); }
 .pin-gray { background: var(--gray); }
+.pin-gold { background: #e0a400; }
+.pin-gold span, .pin-cert span { color: #fff; }
+
+/* 信頼度バッジ */
+.badge-cert { background: #fdf0cf; color: #8a5a00; }
+.badge-confirmed { background: #e5f6ec; color: var(--green); }
+.badge-info { background: #e7effe; color: var(--brand); }
 
 .hidden { display: none !important; }
 

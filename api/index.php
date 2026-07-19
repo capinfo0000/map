@@ -7,6 +7,8 @@
 
 require __DIR__ . '/../lib/estimate.php';
 require __DIR__ . '/../lib/helpers.php';
+require __DIR__ . '/../lib/trust.php';
+require __DIR__ . '/../lib/reputation.php';
 require __DIR__ . '/../lib/db.php';
 
 $configPath = __DIR__ . '/../lib/config.php';
@@ -38,6 +40,7 @@ $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 function decorate_lot(array $lot, float $hours): array
 {
     $lot['estimate'] = estimateFee($lot, $hours);
+    $lot['trust'] = trustLevel($lot); // 信頼度ランク（みんなの確認で上がる）
     // 数値カラムを数値型に
     foreach (['id', 'hourly_rate', 'max_rate', 'capacity', 'confirm_count', 'report_count'] as $k) {
         if (isset($lot[$k]) && $lot[$k] !== null) {
@@ -46,6 +49,8 @@ function decorate_lot(array $lot, float $hours): array
     }
     $lot['lat'] = (float)$lot['lat'];
     $lot['lng'] = (float)$lot['lng'];
+    // 内部トークンは外に出さない
+    unset($lot['created_by_token']);
     return $lot;
 }
 
@@ -98,8 +103,18 @@ if ($route === '/lots' && $method === 'POST') {
     $data = $parsed['data'];
     $data['photo']  = $photo['filename'];
     $data['source'] = 'user';
+    $token = trim($_POST['client_token'] ?? '');
+    $data['created_by_token'] = $token ?: null;
+    if ($token !== '') {
+        $db->upsertUser($token, $data['nickname']);
+    }
     $lot = $db->createLot($data);
-    json_out(['lot' => decorate_lot($lot, 1)], 201);
+    $me = null;
+    if ($token !== '') {
+        $stats = $db->getUserStats($token);
+        $me = ['nickname' => $stats['nickname']] + reputation($stats);
+    }
+    json_out(['lot' => decorate_lot($lot, 1), 'me' => $me], 201);
 }
 
 // POST /api/lots/{id}  （編集。PHP は PUT+multipart で $_FILES が空になるため POST に統一）
@@ -136,6 +151,7 @@ if (preg_match('#^/lots/(\d+)/(confirm|report)$#', $route, $m) && $method === 'P
     if ($token === '') {
         json_error('client_token が必要です', 400);
     }
+    $db->upsertUser($token); // 確認/報告した人も貢献として記録
     $result = $db->addReport($id, $token, $kind, $body['comment'] ?? null);
     if (!$result['ok'] && ($result['reason'] ?? '') === 'notfound') {
         json_error('not found', 404);
@@ -143,7 +159,22 @@ if (preg_match('#^/lots/(\d+)/(confirm|report)$#', $route, $m) && $method === 'P
     if (!$result['ok'] && ($result['reason'] ?? '') === 'duplicate') {
         json_error($kind === 'confirm' ? 'すでに確認済みです' : 'すでに報告済みです', 409);
     }
-    json_out(['lot' => decorate_lot($result['lot'], 1)]);
+    // 確認/報告後の、投票者本人の最新の貢献度も返す（チップ即時更新用）
+    $stats = $db->getUserStats($token);
+    json_out([
+        'lot' => decorate_lot($result['lot'], 1),
+        'me'  => ['nickname' => $stats['nickname']] + reputation($stats),
+    ]);
+}
+
+// GET /api/users/me?token=...  （自分の貢献ランク・バッジ）
+if ($route === '/users/me' && $method === 'GET') {
+    $token = trim($_GET['token'] ?? '');
+    if ($token === '') {
+        json_error('token が必要です', 400);
+    }
+    $stats = $db->getUserStats($token);
+    json_out(['nickname' => $stats['nickname']] + reputation($stats));
 }
 
 json_error('not found: ' . $route, 404);

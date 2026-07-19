@@ -25,6 +25,7 @@ const state = {
   addMode: false,
   pending: null, // {lat, lng} 登録中の位置
   editingId: null,
+  me: null, // 自分の貢献ランク {points, rank, nextRank, badges, stats, nickname}
 };
 
 // ---- 地図初期化 ----
@@ -62,18 +63,41 @@ function relTime(iso) {
   return `${Math.floor(d / 365)}年以上前`;
 }
 
-// 情報の鮮度・信頼性からバッジ種別を決める
+// 情報の鮮度（更新日）からバッジを決める。信頼度は trust 側で扱う。
 function freshness(lot) {
-  if (lot.report_count >= 3) return { cls: 'badge-warn', label: `⚠️ 要確認(報告${lot.report_count})`, pin: 'pin-red' };
   const ref = lot.last_confirmed_at || lot.updated_at;
   const d = daysSince(ref);
-  if (d == null) return { cls: 'badge-old', label: '更新日不明', pin: 'pin-gray' };
-  if (d <= 30) return { cls: 'badge-fresh', label: `${relTime(ref)}に更新`, pin: null };
-  if (d <= 90) return { cls: 'badge-mid', label: `${relTime(ref)}に更新`, pin: null };
-  return { cls: 'badge-old', label: `⚠️ ${relTime(ref)}（古い可能性）`, pin: null };
+  if (d == null) return { cls: 'badge-old', label: '更新日不明' };
+  if (d <= 30) return { cls: 'badge-fresh', label: `${relTime(ref)}に更新` };
+  if (d <= 90) return { cls: 'badge-mid', label: `${relTime(ref)}に更新` };
+  return { cls: 'badge-old', label: `⚠️ ${relTime(ref)}（古い可能性）` };
 }
 
-// 料金帯からピン色（安い=緑/中=橙/高=赤/不明=灰）。要確認は freshness が優先。
+// 信頼度バッジ（サーバの trust をもとに）。level: unconfirmed|has-info|confirmed|certified|flagged
+function trustBadge(lot) {
+  const t = lot.trust;
+  if (!t) return '';
+  const cls = { flagged: 'badge-warn', certified: 'badge-cert', confirmed: 'badge-confirmed', 'has-info': 'badge-info', unconfirmed: 'badge-old' }[t.level] || 'badge-old';
+  return `<span class="badge ${cls}">${escapeHtml(t.label)}</span>`;
+}
+
+// 「あと N 人で〜」の合意形成ヒント
+function trustHint(lot) {
+  const t = lot.trust;
+  if (!t || t.next == null) return '';
+  const goal = t.level === 'confirmed' ? '認定' : 'みんなが確認';
+  return `<p class="popup-note">🤝 あと ${t.next} 人の「✅正しい」で「${goal}」になります</p>`;
+}
+
+// ピン色: 信頼度（要確認=赤/認定=金）を優先し、それ以外は料金帯で色分け
+function pinClass(lot) {
+  const level = lot.trust && lot.trust.level;
+  if (level === 'flagged') return 'pin-red';
+  if (level === 'certified') return 'pin-gold';
+  return priceColor(lot);
+}
+
+// 料金帯からピン色（安い=緑/中=橙/高=赤/不明=灰）
 function priceColor(lot) {
   const v = lot.estimate;
   if (v == null) return 'pin-gray';
@@ -98,8 +122,7 @@ function distLabel(lot) {
 }
 
 function makePinIcon(lot) {
-  const fresh = freshness(lot);
-  const cls = fresh.pin || priceColor(lot);
+  const cls = pinClass(lot);
   return L.divIcon({
     className: '',
     html: `<div class="pin ${cls}"><span>${lot.estimate != null ? '¥' + shortYen(lot.estimate) : 'P'}</span></div>`,
@@ -178,7 +201,9 @@ function popupHtml(lot) {
       <p class="popup-price">時間 ${yen(lot.hourly_rate)} / 最大 ${yen(lot.max_rate)}</p>
       ${lot.fee_note ? `<p class="popup-note">📝 ${escapeHtml(lot.fee_note)}</p>` : ''}
       ${lot.address ? `<p class="popup-note">📍 ${escapeHtml(lot.address)}</p>` : ''}
+      ${trustHint(lot)}
       <div class="popup-meta">
+        ${trustBadge(lot)}
         <span class="badge ${fresh.cls}">${fresh.label}</span>
         ${sample}
         ${noPhoto}
@@ -222,11 +247,11 @@ function renderList() {
           <span style="color:var(--muted)"> ｜ 時間${yen(lot.hourly_rate)} / 最大${yen(lot.max_rate)}</span>
         </div>
         <div class="lot-meta">
+          ${trustBadge(lot)}
           <span class="badge ${fresh.cls}">${fresh.label}</span>
           ${lot.source === 'osm' ? '<span class="badge badge-sample">🔰 サンプル</span>' : ''}
           ${!lot.photo ? '<span class="badge badge-photo">📷 写真なし</span>' : ''}
           ${dist ? `<span>🚶 ${dist}</span>` : ''}
-          ${lot.confirm_count ? `<span>✅ ${lot.confirm_count}</span>` : ''}
         </div>
       </div>`;
     li.addEventListener('click', () => {
@@ -258,10 +283,79 @@ async function vote(id, kind) {
     const json = await res.json();
     if (!res.ok) return toast(json.error || 'エラーが発生しました');
     toast(kind === 'confirm' ? 'ありがとうございます！確認を記録しました' : '報告を受け付けました');
+    if (json.me) applyMe(json.me);
     await loadLots();
   } catch (e) {
     toast('通信に失敗しました');
   }
+}
+
+// ---- 貢献ランク（reputation） ----
+async function fetchMe() {
+  try {
+    const res = await fetch('/api/users/me?token=' + encodeURIComponent(CLIENT_TOKEN));
+    if (!res.ok) return;
+    applyMe(await res.json(), { silent: true });
+  } catch (e) { /* noop */ }
+}
+
+// me を反映。ランクが上がっていたら祝いのトーストを出す。
+function applyMe(me, opts = {}) {
+  const prev = state.me;
+  state.me = me;
+  renderRankChip();
+  if (!opts.silent && prev && me.rank && prev.rank && me.rank.key !== prev.rank.key) {
+    const order = ['bronze', 'silver', 'gold', 'platinum'];
+    if (order.indexOf(me.rank.key) > order.indexOf(prev.rank.key)) {
+      toast(`ランクアップ！${me.rank.label} になりました🎉`);
+    }
+  }
+  // 登録フォームのニックネームを保存済みの表示名で補完
+  if (me.nickname && $('#lot-form') && !$('#lot-form').nickname.value) {
+    $('#lot-form').nickname.value = me.nickname;
+  }
+}
+
+function renderRankChip() {
+  const chip = $('#rank-chip');
+  if (!chip || !state.me) return;
+  chip.innerHTML = `${state.me.rank.label}<span class="rank-pts">${state.me.points}pt</span>`;
+}
+
+function openProfile() {
+  const me = state.me;
+  if (!me) return;
+  $('#profile-rank-label').textContent = me.rank.label;
+  $('#profile-points').textContent = `${me.points} pt`;
+
+  // 進捗バー（現ランク下限→次ランク下限）
+  const bar = $('#progress-bar');
+  const nextEl = $('#profile-next');
+  if (me.nextRank) {
+    // 次ランクのしきい値に対する到達率
+    const pct = Math.max(0, Math.min(100, (me.points / me.nextRank.min) * 100));
+    bar.style.width = pct + '%';
+    nextEl.textContent = `次のランク「${me.nextRank.label}」まであと ${me.nextRank.remaining}pt`;
+  } else {
+    bar.style.width = '100%';
+    nextEl.textContent = '最高ランクに到達しています！🎉';
+  }
+
+  const s = me.stats;
+  $('#profile-stats').innerHTML = `
+    ${statBox(s.posts, '登録した駐車場')}
+    ${statBox(s.photoPosts, '写真つき投稿')}
+    ${statBox(s.votes, '確認・報告')}
+    ${statBox(s.confirmsReceived, '自分の情報が確認された')}`;
+
+  $('#badge-grid').innerHTML = me.badges.map((b) =>
+    `<div class="badge-item ${b.earned ? 'earned' : 'locked'}">${b.earned ? '' : '🔒 '}${escapeHtml(b.label)}</div>`
+  ).join('');
+
+  $('#profile').classList.remove('hidden');
+}
+function statBox(num, label) {
+  return `<div class="stat-box"><div class="stat-num">${num}</div><div class="stat-label">${label}</div></div>`;
 }
 
 // ---- 現在地 ----
@@ -423,6 +517,7 @@ $('#lot-form').addEventListener('submit', async (e) => {
   ['name', 'lat', 'lng', 'address', 'hourly_rate', 'max_rate', 'fee_note', 'capacity', 'nickname'].forEach((k) => {
     fd.append(k, form[k].value.trim());
   });
+  fd.append('client_token', CLIENT_TOKEN);
   const file = form.photo.files[0];
   if (file) {
     const resized = await resizeImage(file);
@@ -442,6 +537,7 @@ $('#lot-form').addEventListener('submit', async (e) => {
     }
     closeForm();
     toast(editing ? '更新しました！' : '登録しました！ありがとうございます');
+    if (json.me) applyMe(json.me);
     await loadLots();
     const saved = json.lot;
     map.setView([saved.lat, saved.lng], Math.max(map.getZoom(), 16));
@@ -495,6 +591,9 @@ $('#hours-seg').addEventListener('click', (e) => {
   loadLots();
 });
 
+$('#rank-chip').addEventListener('click', openProfile);
+$('#profile-close').addEventListener('click', () => $('#profile').classList.add('hidden'));
+$('#profile').addEventListener('click', (e) => { if (e.target.id === 'profile') $('#profile').classList.add('hidden'); });
 $('#btn-locate').addEventListener('click', () => locate());
 $('#btn-add').addEventListener('click', startAddMode);
 $('#btn-cancel-add').addEventListener('click', stopAddMode);
@@ -506,6 +605,7 @@ $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') clos
 map.on('moveend', scheduleReload);
 
 // ---- 起動 ----
+fetchMe(); // 自分の貢献ランクを取得してチップに反映
 // まず現在地の取得を試み、その付近の駐車場を「近い順」で初期表示する。
 // 位置が取れなければ既定表示（東京駅周辺）のまま概算順で表示。
 (async () => {
