@@ -288,7 +288,12 @@ async function vote(id, kind) {
     });
     const json = await res.json();
     if (!res.ok) return toast(json.error || 'エラーが発生しました');
-    toast(kind === 'confirm' ? 'ありがとうございます！確認を記録しました' : '報告を受け付けました');
+    if (kind === 'report' && json.lot && json.lot.hidden) {
+      toast('報告が多いため、この情報は自動的に非表示になりました');
+      map.closePopup();
+    } else {
+      toast(kind === 'confirm' ? 'ありがとうございます！確認を記録しました' : '報告を受け付けました');
+    }
     if (json.me) applyMe(json.me);
     await loadLots();
   } catch (e) {

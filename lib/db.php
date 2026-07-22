@@ -14,6 +14,10 @@ class DB
     /** @var string */
     private $driver;
 
+    // 自動非表示のしきい値: 報告がこの数以上たまり、かつ確認数を上回ったら非表示にする
+    // （確認された良い情報を守りつつ、荒らし投稿を管理者なしで隠す）
+    const HIDE_MIN_REPORTS = 5;
+
     public function __construct(array $config)
     {
         $this->driver = $config['driver'] ?? 'sqlite';
@@ -75,7 +79,9 @@ class DB
                 updated_at        VARCHAR(30) NOT NULL,
                 confirm_count     INT NOT NULL DEFAULT 0,
                 last_confirmed_at VARCHAR(30),
-                report_count      INT NOT NULL DEFAULT 0
+                report_count      INT NOT NULL DEFAULT 0,
+                hidden            INT NOT NULL DEFAULT 0,
+                hidden_at         VARCHAR(30)
             )$engine
         ");
 
@@ -104,6 +110,8 @@ class DB
         foreach ([
             'ALTER TABLE lots ADD COLUMN created_by_token VARCHAR(80)',
             'ALTER TABLE reports ADD COLUMN was_stale INT NOT NULL DEFAULT 0',
+            'ALTER TABLE lots ADD COLUMN hidden INT NOT NULL DEFAULT 0',
+            'ALTER TABLE lots ADD COLUMN hidden_at VARCHAR(30)',
         ] as $sql) {
             try {
                 $this->pdo->exec($sql);
@@ -175,7 +183,8 @@ class DB
         if ($bbox) {
             $stmt = $this->pdo->prepare("
                 SELECT * FROM lots
-                WHERE lat BETWEEN :minLat AND :maxLat
+                WHERE hidden = 0
+                  AND lat BETWEEN :minLat AND :maxLat
                   AND lng BETWEEN :minLng AND :maxLng
             ");
             $stmt->execute([
@@ -184,7 +193,7 @@ class DB
             ]);
             return $stmt->fetchAll();
         }
-        return $this->pdo->query('SELECT * FROM lots')->fetchAll();
+        return $this->pdo->query('SELECT * FROM lots WHERE hidden = 0')->fetchAll();
     }
 
     public function updateLot(int $id, array $d): array
@@ -240,6 +249,12 @@ class DB
                 $this->pdo->prepare(
                     'UPDATE lots SET report_count = report_count + 1 WHERE id = ?'
                 )->execute([$lotId]);
+                // 自動非表示: 報告が既定数以上たまり、かつ確認数を上回ったら非表示（管理者不要・巻き添え防止）
+                $this->pdo->prepare(
+                    "UPDATE lots SET hidden = 1, hidden_at = ?
+                     WHERE id = ? AND hidden = 0
+                       AND report_count >= ? AND report_count > confirm_count"
+                )->execute([$now, $lotId, self::HIDE_MIN_REPORTS]);
             }
             $this->pdo->commit();
         } catch (PDOException $e) {
@@ -258,6 +273,43 @@ class DB
     public function countLots(): int
     {
         return (int)$this->pdo->query('SELECT COUNT(*) AS c FROM lots')->fetch()['c'];
+    }
+
+    // ---- メンテナンス（画像・不要データの掃除） ----
+
+    /** DB で参照されている写真ファイル名の一覧（孤立ファイル判定用）。 */
+    public function referencedPhotos(): array
+    {
+        $rows = $this->pdo->query("SELECT photo FROM lots WHERE photo IS NOT NULL AND photo <> ''")->fetchAll();
+        return array_map(fn($r) => $r['photo'], $rows);
+    }
+
+    /**
+     * 非表示になってから $days 日以上たった駐車場を完全削除する。
+     * （報告多数で非表示のまま放置されたスパム等を、猶予期間を置いて自動削除する）
+     * @return array{lots:int, photos:string[]} 削除した駐車場数と、その写真ファイル名一覧
+     */
+    public function purgeHiddenOlderThan(int $days): array
+    {
+        $cutoff = gmdate('Y-m-d\TH:i:s\Z', time() - $days * 86400);
+        $sel = $this->pdo->prepare(
+            "SELECT id, photo FROM lots WHERE hidden = 1 AND hidden_at IS NOT NULL AND hidden_at < ?"
+        );
+        $sel->execute([$cutoff]);
+        $rows = $sel->fetchAll();
+        if (!$rows) {
+            return ['lots' => 0, 'photos' => []];
+        }
+        $ids = array_map(fn($r) => (int)$r['id'], $rows);
+        $in = implode(',', array_fill(0, count($ids), '?'));
+
+        $this->pdo->beginTransaction();
+        $this->pdo->prepare("DELETE FROM reports WHERE lot_id IN ($in)")->execute($ids);
+        $this->pdo->prepare("DELETE FROM lots WHERE id IN ($in)")->execute($ids);
+        $this->pdo->commit();
+
+        $photos = array_values(array_filter(array_map(fn($r) => $r['photo'] ?? '', $rows)));
+        return ['lots' => count($rows), 'photos' => $photos];
     }
 
     // ---- users（貢献度・匿名トークン単位） ----

@@ -42,7 +42,7 @@ function decorate_lot(array $lot, float $hours): array
     $lot['estimate'] = estimateFee($lot, $hours);
     $lot['trust'] = trustLevel($lot); // 信頼度ランク（みんなの確認で上がる）
     // 数値カラムを数値型に
-    foreach (['id', 'hourly_rate', 'max_rate', 'capacity', 'confirm_count', 'report_count'] as $k) {
+    foreach (['id', 'hourly_rate', 'max_rate', 'capacity', 'confirm_count', 'report_count', 'hidden'] as $k) {
         if (isset($lot[$k]) && $lot[$k] !== null) {
             $lot[$k] = (int)$lot[$k];
         }

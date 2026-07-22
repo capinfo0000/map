@@ -112,9 +112,61 @@ function handle_photo_upload(string $uploadDir, int $maxBytes): array
     if (!is_dir($uploadDir)) {
         @mkdir($uploadDir, 0775, true);
     }
+
+    // 保存前に軽量化（長辺 1280px・JPEG 品質78 に再エンコード）。GD が無ければ原本を保存。
+    if (function_exists('imagecreatefromstring')) {
+        $filename = date('YmdHis') . '-' . bin2hex(random_bytes(5)) . '.jpg';
+        if (compress_image($f['tmp_name'], $uploadDir . '/' . $filename, 1280, 78)) {
+            return ['filename' => $filename];
+        }
+    }
+    // フォールバック: 原本をそのまま保存
     $filename = date('YmdHis') . '-' . bin2hex(random_bytes(5)) . $extByMime[$mime];
     if (!move_uploaded_file($f['tmp_name'], $uploadDir . '/' . $filename)) {
         return ['error' => '画像の保存に失敗しました'];
     }
     return ['filename' => $filename];
+}
+
+/** 画像を長辺 maxSide 以内に縮小し JPEG で保存。成功で true。 */
+function compress_image(string $src, string $dest, int $maxSide, int $quality): bool
+{
+    $raw = @file_get_contents($src);
+    if ($raw === false) {
+        return false;
+    }
+    $img = @imagecreatefromstring($raw);
+    if ($img === false) {
+        return false;
+    }
+    $w = imagesx($img);
+    $h = imagesy($img);
+
+    // EXIF の回転情報を反映（JPEG のみ・関数があれば）
+    if (function_exists('exif_read_data')) {
+        $exif = @exif_read_data($src);
+        if (!empty($exif['Orientation'])) {
+            $deg = [3 => 180, 6 => -90, 8 => 90][$exif['Orientation']] ?? 0;
+            if ($deg !== 0) {
+                $img = imagerotate($img, $deg, 0);
+                $w = imagesx($img);
+                $h = imagesy($img);
+            }
+        }
+    }
+
+    $scale = min(1, $maxSide / max($w, $h));
+    $nw = max(1, (int)round($w * $scale));
+    $nh = max(1, (int)round($h * $scale));
+
+    $dst = imagecreatetruecolor($nw, $nh);
+    // 透過 PNG 等は白背景に
+    $white = imagecolorallocate($dst, 255, 255, 255);
+    imagefilledrectangle($dst, 0, 0, $nw, $nh, $white);
+    imagecopyresampled($dst, $img, 0, 0, 0, 0, $nw, $nh, $w, $h);
+
+    $ok = imagejpeg($dst, $dest, $quality);
+    imagedestroy($img);
+    imagedestroy($dst);
+    return $ok;
 }

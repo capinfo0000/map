@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS lots (
     confirm_count     INT NOT NULL DEFAULT 0,
     last_confirmed_at VARCHAR(30),
     report_count      INT NOT NULL DEFAULT 0,
+    hidden            INT NOT NULL DEFAULT 0,
+    hidden_at         VARCHAR(30),
     INDEX idx_lots_latlng (lat, lng)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
