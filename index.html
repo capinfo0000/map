@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>🅿️ みんなの駐車場マップ</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🅿️</text></svg>" />
+  <meta name="description" content="みんなで作る駐車場マップ。周辺の駐車場と料金を地図で探して、最安値を見つけよう。" />
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <h1 class="brand">🅿️ みんなの駐車場マップ</h1>
+      <div class="topbar-actions">
+        <button id="rank-chip" class="rank-chip" title="あなたの貢献ランク">🥉 ブロンズ<span class="rank-pts">0pt</span></button>
+        <button id="btn-locate" class="icon-btn" title="現在地へ">📍 現在地</button>
+        <button id="btn-add" class="primary-btn">＋ 駐車場を登録</button>
+      </div>
+    </header>
+
+    <div class="controls">
+      <div class="control-group">
+        <span class="control-label">並び替え</span>
+        <div class="segmented" id="sort-seg">
+          <button data-sort="distance">近い順</button>
+          <button data-sort="estimate" class="active">概算が安い順</button>
+          <button data-sort="hourly">時間料金順</button>
+          <button data-sort="max">最大料金順</button>
+          <button data-sort="updated">新しい順</button>
+        </div>
+      </div>
+      <div class="control-group">
+        <span class="control-label">駐車時間</span>
+        <div class="segmented" id="hours-seg">
+          <button data-hours="0.5">30分</button>
+          <button data-hours="1" class="active">1時間</button>
+          <button data-hours="3">3時間</button>
+          <button data-hours="24">1日</button>
+        </div>
+      </div>
+    </div>
+
+    <main class="layout">
+      <div id="map"></div>
+      <aside id="list-panel" class="list-panel">
+        <div class="list-header">
+          <span id="list-count">駐車場を読み込み中…</span>
+        </div>
+        <ul id="lot-list" class="lot-list"></ul>
+      </aside>
+    </main>
+
+    <div id="add-hint" class="add-hint hidden">
+      地図をタップして駐車場の位置を指定してください
+      <button id="btn-cancel-add" class="link-btn">キャンセル</button>
+    </div>
+  </div>
+
+  <!-- 登録/編集フォーム モーダル -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2 id="modal-title">駐車場を登録</h2>
+        <button id="modal-close" class="icon-btn">✕</button>
+      </div>
+      <form id="lot-form">
+        <input type="hidden" name="id" />
+        <input type="hidden" name="lat" />
+        <input type="hidden" name="lng" />
+
+        <label class="field">
+          <span>駐車場名 <em class="req">必須</em></span>
+          <input name="name" type="text" maxlength="120" placeholder="例: ○○コインパーキング" required />
+        </label>
+
+        <div class="grid2">
+          <label class="field">
+            <span>時間料金（円/1時間）</span>
+            <input name="hourly_rate" type="number" min="0" inputmode="numeric" placeholder="例: 200" />
+          </label>
+          <label class="field">
+            <span>最大料金（円/日）</span>
+            <input name="max_rate" type="number" min="0" inputmode="numeric" placeholder="例: 800" />
+          </label>
+        </div>
+
+        <label class="field">
+          <span>料金メモ（任意）</span>
+          <input name="fee_note" type="text" maxlength="500" placeholder="例: 20分100円 / 夜間最大500円" />
+        </label>
+
+        <div class="grid2">
+          <label class="field">
+            <span>台数（任意）</span>
+            <input name="capacity" type="number" min="0" inputmode="numeric" placeholder="例: 20" />
+          </label>
+          <label class="field">
+            <span>ニックネーム（任意）</span>
+            <input name="nickname" type="text" maxlength="40" placeholder="例: とおりすがり" />
+          </label>
+        </div>
+
+        <label class="field">
+          <span>住所・目印（任意）</span>
+          <input name="address" type="text" maxlength="200" placeholder="例: ○○市△△町1-2-3" />
+        </label>
+
+        <label class="field">
+          <span>料金看板の写真 <em class="hint-inline">（情報の根拠になります・強く推奨）</em></span>
+          <input id="photo-input" name="photo" type="file" accept="image/*" capture="environment" />
+          <div id="photo-preview" class="photo-preview hidden"><img alt="プレビュー" /></div>
+        </label>
+
+        <p id="form-error" class="form-error hidden"></p>
+        <p class="pos-note">位置: <span id="pos-label">—</span></p>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-form-cancel" class="ghost-btn">キャンセル</button>
+          <button type="submit" id="btn-submit" class="primary-btn">登録する</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- プロフィール（貢献ランク） -->
+  <div id="profile" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>あなたの貢献</h2>
+        <button id="profile-close" class="icon-btn">✕</button>
+      </div>
+      <div class="profile-rank">
+        <div id="profile-rank-label" class="profile-rank-label">🥉 ブロンズ</div>
+        <div id="profile-points" class="profile-points">0 pt</div>
+      </div>
+      <div class="progress"><div id="progress-bar" class="progress-bar"></div></div>
+      <p id="profile-next" class="profile-next"></p>
+
+      <div class="profile-stats" id="profile-stats"></div>
+
+      <h3 class="profile-h3">バッジ</h3>
+      <div class="badge-grid" id="badge-grid"></div>
+
+      <p class="profile-note">確認・登録・写真添付などで貢献するとランクが上がります。あなたが登録した情報を他の人が「✅正しい」と確認するとさらにポイントが入ります。</p>
+    </div>
+  </div>
+
+  <!-- 写真拡大 -->
+  <div id="lightbox" class="lightbox hidden"><img alt="料金看板" /></div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/vendor/leaflet/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

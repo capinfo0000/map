@@ -1,0 +1,16 @@
+# /api/* をフロントコントローラへ集約
+RewriteEngine On
+
+# 実在するファイル/ディレクトリはそのまま配信（index.html, app.js, uploads/... など）
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# それ以外の /api リクエストは api/index.php へ
+RewriteRule ^api(/.*)?$ api/index.php [QSA,L]
+
+# 既定ドキュメント
+DirectoryIndex index.html
+
+# 文字コード
+AddDefaultCharset UTF-8
