@@ -5,7 +5,8 @@
  */
 
 const OVERPASS_CACHE_TTL = 21600; // キャッシュ有効期間（秒）＝6時間
-const OVERPASS_MAX_SPAN  = 0.2;   // これより広い範囲はOverpass保護のためリクエストしない（約22km）
+const OVERPASS_MAX_SPAN  = 0.4;   // これより広い範囲はOverpass保護のためリクエストしない（約44km）
+const OVERPASS_LIMIT     = 500;   // 取得件数の上限（多いエリアで片側が欠けないよう十分大きく）
 
 /**
  * 指定 bbox の駐車場一覧を返す（キャッシュ優先）。
@@ -14,11 +15,12 @@ const OVERPASS_MAX_SPAN  = 0.2;   // これより広い範囲はOverpass保護�
  */
 function parking_nearby(array $bbox, string $cacheDir): array
 {
-    // キャッシュ共有のため座標を粗いグリッド(0.01°≒1.1km)に丸める
-    $minLat = round($bbox['minLat'], 2);
-    $maxLat = round($bbox['maxLat'], 2);
-    $minLng = round($bbox['minLng'], 2);
-    $maxLng = round($bbox['maxLng'], 2);
+    // キャッシュ共有のため 0.01°(≒1.1km) グリッドに丸める。
+    // ただし内側に丸めると端が欠けるので、必ず外側へ広げる(floor/ceil)＝画面全体を覆う
+    $minLat = floor($bbox['minLat'] * 100) / 100;
+    $maxLat = ceil($bbox['maxLat'] * 100) / 100;
+    $minLng = floor($bbox['minLng'] * 100) / 100;
+    $maxLng = ceil($bbox['maxLng'] * 100) / 100;
 
     // 広すぎる範囲はスキップ（Overpass 保護）
     if (($maxLat - $minLat) > OVERPASS_MAX_SPAN || ($maxLng - $minLng) > OVERPASS_MAX_SPAN) {
@@ -62,7 +64,7 @@ function overpass_fetch(float $minLat, float $minLng, float $maxLat, float $maxL
     $q = '[out:json][timeout:20];('
         . 'node["amenity"="parking"](' . $bbox . ');'
         . 'way["amenity"="parking"](' . $bbox . ');'
-        . ');out center 120;';
+        . ');out center ' . OVERPASS_LIMIT . ';';
 
     $endpoints = [
         'https://overpass-api.de/api/interpreter',
