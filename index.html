@@ -75,20 +75,15 @@
           <input name="name" type="text" maxlength="120" placeholder="例: ○○コインパーキング" required />
         </label>
 
-        <div class="grid2">
-          <label class="field">
-            <span>時間料金（円/1時間）</span>
-            <input name="hourly_rate" type="number" min="0" inputmode="numeric" placeholder="例: 200" />
-          </label>
-          <label class="field">
-            <span>最大料金（円/日）</span>
-            <input name="max_rate" type="number" min="0" inputmode="numeric" placeholder="例: 800" />
-          </label>
+        <div class="field">
+          <span>料金 <em class="hint-inline">（看板どおりに行を足せます）</em></span>
+          <div id="rate-rows" class="rate-rows"></div>
+          <button type="button" id="btn-add-rate" class="add-rate-btn">＋ 料金を追加</button>
         </div>
 
         <label class="field">
           <span>料金メモ（任意）</span>
-          <input name="fee_note" type="text" maxlength="500" placeholder="例: 20分100円 / 夜間最大500円" />
+          <input name="fee_note" type="text" maxlength="500" placeholder="例: 夜間20時〜8時は最大500円 / 最初30分無料" />
         </label>
 
         <div class="grid2">

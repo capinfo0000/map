@@ -149,6 +149,16 @@ button { font-family: inherit; cursor: pointer; }
 .req { color: var(--red); font-style: normal; font-size: 11px; }
 .hint-inline { color: var(--amber); font-style: normal; font-size: 11px; font-weight: 600; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* ---- rate rows (可変料金) ---- */
+.rate-rows { display: flex; flex-direction: column; gap: 8px; }
+.rate-row { display: flex; align-items: center; gap: 6px; }
+.rate-row input[type=number] { width: 68px; font: inherit; font-weight: 500; color: var(--ink); padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #fbfcfd; }
+.rate-row select { font: inherit; font-weight: 500; color: var(--ink); padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #fbfcfd; }
+.rate-row .yen-suffix { color: var(--muted); font-size: 13px; }
+.rate-row .rate-max { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); white-space: nowrap; font-weight: 600; }
+.rate-row .rate-del { background: #f0f2f5; border: none; color: var(--muted); border-radius: 8px; width: 30px; height: 32px; font-size: 16px; flex: none; }
+.add-rate-btn { align-self: flex-start; margin-top: 8px; background: #eef4ff; color: var(--brand); border: 1px dashed #b9d3ff; border-radius: 10px; padding: 8px 14px; font-size: 13px; font-weight: 700; }
 .photo-preview { margin-top: 8px; }
 .photo-preview img { max-width: 100%; max-height: 200px; border-radius: 10px; }
 .pos-note { font-size: 12px; color: var(--muted); margin: 6px 0 0; }

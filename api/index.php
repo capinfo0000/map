@@ -40,6 +40,7 @@ $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 function decorate_lot(array $lot, float $hours): array
 {
     $lot['estimate'] = estimateFee($lot, $hours);
+    $lot['rates'] = normalizeRates($lot['rates'] ?? null); // 料金行を配列で返す
     $lot['trust'] = trustLevel($lot); // 信頼度ランク（みんなの確認で上がる）
     // 数値カラムを数値型に
     foreach (['id', 'hourly_rate', 'max_rate', 'capacity', 'confirm_count', 'report_count', 'hidden'] as $k) {
@@ -107,6 +108,13 @@ if ($route === '/lots' && $method === 'POST') {
     $data = $parsed['data'];
     $data['photo']  = $photo['filename'];
     $data['source'] = 'user';
+    // 可変料金行（rates）: 指定があれば保存し、比較用 hourly/max を導出して上書き
+    $rates = process_rates($_POST['rates'] ?? null);
+    $data['rates'] = $rates['json'];
+    if ($rates['json'] !== null) {
+        $data['hourly_rate'] = $rates['derived']['hourly_rate'];
+        $data['max_rate']    = $rates['derived']['max_rate'];
+    }
     $token = trim($_POST['client_token'] ?? '');
     $data['created_by_token'] = $token ?: null;
     if ($token !== '') {
@@ -142,6 +150,12 @@ if (preg_match('#^/lots/(\d+)$#', $route, $m) && $method === 'POST') {
     }
     $data = $parsed['data'];
     $data['photo'] = $photo['filename']; // null なら維持（db 側で COALESCE）
+    $rates = process_rates($_POST['rates'] ?? null);
+    $data['rates'] = $rates['json'];
+    if ($rates['json'] !== null) {
+        $data['hourly_rate'] = $rates['derived']['hourly_rate'];
+        $data['max_rate']    = $rates['derived']['max_rate'];
+    }
     $lot = $db->updateLot($id, $data);
     // 写真差し替え時は旧写真を削除
     if ($photo['filename'] && $existing['photo'] && $existing['photo'] !== $lot['photo']) {

@@ -74,6 +74,7 @@ class DB
                 photo             VARCHAR(255),
                 nickname          VARCHAR(40),
                 source            VARCHAR(20),
+                rates             TEXT,
                 created_by_token  VARCHAR(80),
                 created_at        VARCHAR(30) NOT NULL,
                 updated_at        VARCHAR(30) NOT NULL,
@@ -112,6 +113,7 @@ class DB
             'ALTER TABLE reports ADD COLUMN was_stale INT NOT NULL DEFAULT 0',
             'ALTER TABLE lots ADD COLUMN hidden INT NOT NULL DEFAULT 0',
             'ALTER TABLE lots ADD COLUMN hidden_at VARCHAR(30)',
+            'ALTER TABLE lots ADD COLUMN rates TEXT',
         ] as $sql) {
             try {
                 $this->pdo->exec($sql);
@@ -153,9 +155,9 @@ class DB
         $now = self::nowIso();
         $stmt = $this->pdo->prepare("
             INSERT INTO lots (name, lat, lng, address, hourly_rate, max_rate, fee_note,
-                              capacity, photo, nickname, source, created_by_token, created_at, updated_at)
+                              capacity, photo, nickname, source, rates, created_by_token, created_at, updated_at)
             VALUES (:name, :lat, :lng, :address, :hourly_rate, :max_rate, :fee_note,
-                    :capacity, :photo, :nickname, :source, :created_by_token, :created_at, :updated_at)
+                    :capacity, :photo, :nickname, :source, :rates, :created_by_token, :created_at, :updated_at)
         ");
         $stmt->execute([
             ':name' => $d['name'], ':lat' => $d['lat'], ':lng' => $d['lng'],
@@ -163,6 +165,7 @@ class DB
             ':max_rate' => $d['max_rate'], ':fee_note' => $d['fee_note'],
             ':capacity' => $d['capacity'], ':photo' => $d['photo'],
             ':nickname' => $d['nickname'], ':source' => $d['source'] ?? 'user',
+            ':rates' => $d['rates'] ?? null,
             ':created_by_token' => $d['created_by_token'] ?? null,
             ':created_at' => $now, ':updated_at' => $now,
         ]);
@@ -204,7 +207,7 @@ class DB
             UPDATE lots SET
                 name = :name, lat = :lat, lng = :lng, address = :address,
                 hourly_rate = :hourly_rate, max_rate = :max_rate, fee_note = :fee_note,
-                capacity = :capacity, nickname = :nickname,
+                capacity = :capacity, nickname = :nickname, rates = :rates,
                 photo = COALESCE(:photo, photo),
                 updated_at = :updated_at
             WHERE id = :id
@@ -214,6 +217,7 @@ class DB
             ':address' => $d['address'], ':hourly_rate' => $d['hourly_rate'],
             ':max_rate' => $d['max_rate'], ':fee_note' => $d['fee_note'],
             ':capacity' => $d['capacity'], ':nickname' => $d['nickname'],
+            ':rates' => $d['rates'] ?? null,
             ':photo' => $d['photo'], ':updated_at' => $now, ':id' => $id,
         ]);
         return $this->getLot($id);

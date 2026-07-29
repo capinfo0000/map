@@ -204,7 +204,7 @@ function popupHtml(lot) {
       ${photo}
       <p class="popup-name">${escapeHtml(lot.name)}</p>
       <p class="popup-price">概算(${fmtHours(state.hours)}): <strong>${yen(lot.estimate)}</strong></p>
-      <p class="popup-price">時間 ${yen(lot.hourly_rate)} / 最大 ${yen(lot.max_rate)}</p>
+      <p class="popup-price" style="color:var(--muted)">${escapeHtml(ratesText(lot))}</p>
       ${lot.fee_note ? `<p class="popup-note">📝 ${escapeHtml(lot.fee_note)}</p>` : ''}
       ${lot.address ? `<p class="popup-note">📍 ${escapeHtml(lot.address)}</p>` : ''}
       ${trustHint(lot)}
@@ -231,6 +231,22 @@ function fmtHours(h) {
   return `${h}時間`;
 }
 
+function unitLabel(m) {
+  const map = { 10: '10分', 15: '15分', 20: '20分', 30: '30分', 60: '60分', 720: '12時間', 1440: '24時間' };
+  return map[Number(m)] || `${m}分`;
+}
+
+// 料金行を「10分¥100・60分¥400・24時間¥800(最大)」の形に整形。無ければ旧hourly/maxで代替
+function ratesText(lot) {
+  if (lot.rates && lot.rates.length) {
+    return lot.rates.map((r) => `${unitLabel(r.minutes)}${yen(r.yen)}${r.is_max ? '(最大)' : ''}`).join(' ・ ');
+  }
+  const parts = [];
+  if (lot.hourly_rate != null) parts.push(`時間${yen(lot.hourly_rate)}`);
+  if (lot.max_rate != null) parts.push(`最大${yen(lot.max_rate)}`);
+  return parts.join(' / ') || '料金情報なし';
+}
+
 function renderList() {
   const ul = $('#lot-list');
   ul.innerHTML = '';
@@ -250,7 +266,7 @@ function renderList() {
       <div class="lot-body">
         <p class="lot-name">${escapeHtml(lot.name)}</p>
         <div class="lot-price">概算(${fmtHours(state.hours)}) <strong>${yen(lot.estimate)}</strong>
-          <span style="color:var(--muted)"> ｜ 時間${yen(lot.hourly_rate)} / 最大${yen(lot.max_rate)}</span>
+          <span style="color:var(--muted)"> ｜ ${escapeHtml(ratesText(lot))}</span>
         </div>
         <div class="lot-meta">
           ${trustBadge(lot)}
@@ -431,6 +447,52 @@ map.on('click', (e) => {
   openForm(null, state.pending);
 });
 
+// ---- 可変料金行（rates） ----
+const RATE_UNITS = [
+  { v: 10, label: '10分' }, { v: 15, label: '15分' }, { v: 20, label: '20分' },
+  { v: 30, label: '30分' }, { v: 60, label: '60分' }, { v: 720, label: '12時間' },
+  { v: 1440, label: '24時間' },
+];
+
+function addRateRow(minutes = 60, yen = '', isMax = false) {
+  const row = document.createElement('div');
+  row.className = 'rate-row';
+  const opts = RATE_UNITS.map((u) => `<option value="${u.v}" ${u.v === minutes ? 'selected' : ''}>${u.label}</option>`).join('');
+  row.innerHTML = `
+    <select class="rate-unit">${opts}</select>
+    <input class="rate-yen" type="number" min="0" inputmode="numeric" placeholder="金額" value="${yen}" />
+    <span class="yen-suffix">円</span>
+    <label class="rate-max"><input type="checkbox" class="rate-ismax" ${isMax ? 'checked' : ''} />最大</label>
+    <button type="button" class="rate-del" title="削除">×</button>`;
+  row.querySelector('.rate-del').addEventListener('click', () => row.remove());
+  $('#rate-rows').appendChild(row);
+}
+
+function resetRateRows(rates) {
+  const box = $('#rate-rows');
+  box.innerHTML = '';
+  if (rates && rates.length) {
+    rates.forEach((r) => addRateRow(Number(r.minutes) || 60, r.yen ?? '', !!r.is_max));
+  } else {
+    // 既定で「60分」「24時間(最大)」の空行を用意
+    addRateRow(60, '', false);
+    addRateRow(1440, '', true);
+  }
+}
+
+function gatherRates() {
+  const rates = [];
+  $('#rate-rows').querySelectorAll('.rate-row').forEach((row) => {
+    const minutes = Number(row.querySelector('.rate-unit').value);
+    const yenRaw = row.querySelector('.rate-yen').value.trim();
+    if (yenRaw === '' || !minutes) return; // 金額未入力の行は無視
+    const yen = Number(yenRaw);
+    if (!Number.isFinite(yen) || yen < 0) return;
+    rates.push({ minutes, yen: Math.round(yen), is_max: row.querySelector('.rate-ismax').checked });
+  });
+  return rates;
+}
+
 // ---- フォーム ----
 function openForm(lot, pos) {
   const form = $('#lot-form');
@@ -447,12 +509,11 @@ function openForm(lot, pos) {
     form.lat.value = lot.lat;
     form.lng.value = lot.lng;
     form.name.value = lot.name || '';
-    form.hourly_rate.value = lot.hourly_rate ?? '';
-    form.max_rate.value = lot.max_rate ?? '';
     form.fee_note.value = lot.fee_note || '';
     form.capacity.value = lot.capacity ?? '';
     form.nickname.value = lot.nickname || '';
     form.address.value = lot.address || '';
+    resetRateRows(lot.rates);
     $('#pos-label').textContent = `${lot.lat.toFixed(5)}, ${lot.lng.toFixed(5)}`;
   } else {
     state.editingId = null;
@@ -460,6 +521,7 @@ function openForm(lot, pos) {
     $('#btn-submit').textContent = '登録する';
     form.lat.value = pos.lat;
     form.lng.value = pos.lng;
+    resetRateRows(null);
     $('#pos-label').textContent = `${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}`;
     // 位置から住所・名称を自動取得して入力補助（無料のOSM。失敗時は無言でスキップ）
     autofillFromLocation(pos.lat, pos.lng);
@@ -584,9 +646,10 @@ $('#lot-form').addEventListener('submit', async (e) => {
   submitBtn.textContent = '送信中…';
 
   const fd = new FormData();
-  ['name', 'lat', 'lng', 'address', 'hourly_rate', 'max_rate', 'fee_note', 'capacity', 'nickname'].forEach((k) => {
+  ['name', 'lat', 'lng', 'address', 'fee_note', 'capacity', 'nickname'].forEach((k) => {
     fd.append(k, form[k].value.trim());
   });
+  fd.append('rates', JSON.stringify(gatherRates()));
   fd.append('client_token', CLIENT_TOKEN);
   const file = form.photo.files[0];
   if (file) {
@@ -661,6 +724,7 @@ $('#hours-seg').addEventListener('click', (e) => {
   loadLots();
 });
 
+$('#btn-add-rate').addEventListener('click', () => addRateRow(60, '', false));
 $('#rank-chip').addEventListener('click', openProfile);
 $('#profile-close').addEventListener('click', () => $('#profile').classList.add('hidden'));
 $('#profile').addEventListener('click', (e) => { if (e.target.id === 'profile') $('#profile').classList.add('hidden'); });

@@ -84,6 +84,27 @@ function read_lot_body(array $b): array
 }
 
 /**
+ * POST された rates（料金行の JSON 文字列）を検証・正規化し、
+ * 保存用 JSON と、比較用に導出した hourly_rate/max_rate を返す。
+ * rates が未指定なら json=null（＝旧来の hourly/max をそのまま使う）。
+ * @return array{json:?string, derived:array{hourly_rate:?int,max_rate:?int}}
+ */
+function process_rates($raw): array
+{
+    if ($raw === null || $raw === '' ) {
+        return ['json' => null, 'derived' => ['hourly_rate' => null, 'max_rate' => null]];
+    }
+    $rates = normalizeRates($raw); // 配列/JSON どちらでも可
+    if (!$rates) {
+        return ['json' => null, 'derived' => ['hourly_rate' => null, 'max_rate' => null]];
+    }
+    return [
+        'json'    => json_encode($rates, JSON_UNESCAPED_UNICODE),
+        'derived' => deriveComparable($rates),
+    ];
+}
+
+/**
  * アップロードされた写真を保存し、保存ファイル名を返す。無ければ null。
  * @return array{filename?:?string, error?:string}
  */

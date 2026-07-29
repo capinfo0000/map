@@ -56,6 +56,15 @@ foreach ($seeds as $s) {
     // プレースホルダの料金看板画像（SVG）を生成
     $photo = make_placeholder_svg($UPLOAD_DIR, $s);
 
+    // 料金行（rates）も付与：60分=時間料金、24時間=最大料金
+    $rates = [];
+    if (!empty($s['hourly_rate'])) {
+        $rates[] = ['minutes' => 60, 'yen' => (int)$s['hourly_rate'], 'is_max' => false];
+    }
+    if (!empty($s['max_rate'])) {
+        $rates[] = ['minutes' => 1440, 'yen' => (int)$s['max_rate'], 'is_max' => true];
+    }
+
     $db->createLot([
         'name'        => $s['name'],
         'lat'         => (float)$s['lat'],
@@ -68,6 +77,7 @@ foreach ($seeds as $s) {
         'photo'       => $photo,
         'nickname'    => $s['nickname'] ?? '初期データ',
         'source'      => 'osm',
+        'rates'       => $rates ? json_encode($rates, JSON_UNESCAPED_UNICODE) : null,
     ]);
     $added++;
 }
