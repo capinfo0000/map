@@ -165,46 +165,55 @@ async function loadLots() {
 let _moveTimer = null;
 function scheduleReload() {
   clearTimeout(_moveTimer);
-  _moveTimer = setTimeout(loadLots, 400);
+  _moveTimer = setTimeout(loadLots, 250);
 }
 
 // ---- 地図上の「P」(OpenStreetMap の駐車場) をグレーピンで表示 ----
 const osmLayer = L.layerGroup().addTo(map);
-const osmCache = new Map(); // bboxキー -> 要素配列
 let osmFetching = false;
-let osmPendingKey = null; // 取得中に画面が変わったら、あとで最新ビューを取り直す
+let osmPending = false;          // 取得中に画面が変わったら、あとで取り直す
+let osmCoverage = null;          // { bounds: 取得済みの広めの範囲, els }
 
 const OSM_MIN_ZOOM = 13; // これ以上ズームしたら地図上の駐車場(P)を表示
 
-function bboxKey(b) {
-  return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((x) => x.toFixed(3)).join(',');
-}
-
 async function refreshOsmPins() {
   // ズームが浅すぎると数が多すぎるので、ある程度拡大したときだけ表示
-  if (map.getZoom() < OSM_MIN_ZOOM) { osmLayer.clearLayers(); return; }
-  const b = map.getBounds();
-  const key = bboxKey(b);
+  if (map.getZoom() < OSM_MIN_ZOOM) { osmLayer.clearLayers(); osmCoverage = null; return; }
+  const view = map.getBounds();
 
-  // キャッシュがあれば即描画（スナップ感）
-  const cached = osmCache.get(key);
-  if (cached) { renderOsmPins(cached); return; }
+  // 直近に取得した「広めの範囲」に収まっていれば、取得せず即描画（体感を高速に）
+  if (osmCoverage && osmCoverage.bounds.contains(view)) {
+    renderOsmPins(osmCoverage.els);
+    return;
+  }
+  // すでに取得中なら、あとで最新ビューを取り直す（取りこぼし防止）
+  if (osmFetching) { osmPending = true; return; }
 
-  // すでに取得中なら、最新ビューを覚えておいて後で取り直す（更新の取りこぼし防止）
-  if (osmFetching) { osmPendingKey = key; return; }
   osmFetching = true;
+  showOsmLoading(true);
   try {
-    const els = await fetchOverpassParking(b);
-    osmCache.set(key, els);
-    // 取得完了時にまだ同じビューなら描画（ズーム連打で古い結果を出さない）
-    if (bboxKey(map.getBounds()) === key) renderOsmPins(els);
-  } catch (e) { /* 失敗は無視 */ }
+    const padded = view.pad(0.3); // 画面より少し広めに取得 → 小さな移動は再取得不要
+    const els = await fetchOverpassParking(padded);
+    osmCoverage = { bounds: padded, els };
+    renderOsmPins(els);
+  } catch (e) { /* 失敗は無視（手動で再操作すれば再取得） */ }
   finally {
     osmFetching = false;
-    // 取得中に画面が変わっていたら、最新ビューで取り直す
-    if (osmPendingKey && osmPendingKey !== key) { osmPendingKey = null; refreshOsmPins(); }
-    else { osmPendingKey = null; }
+    showOsmLoading(false);
+    if (osmPending) { osmPending = false; refreshOsmPins(); }
   }
+}
+
+// 読み込み中インジケータ（右下に小さく表示）
+let _osmLoadingEl = null;
+function showOsmLoading(on) {
+  if (!_osmLoadingEl) {
+    _osmLoadingEl = document.createElement('div');
+    _osmLoadingEl.className = 'osm-loading hidden';
+    _osmLoadingEl.textContent = '🅿️ 周辺の駐車場を読み込み中…';
+    document.body.appendChild(_osmLoadingEl);
+  }
+  _osmLoadingEl.classList.toggle('hidden', !on);
 }
 
 async function fetchOverpassParking(b) {
