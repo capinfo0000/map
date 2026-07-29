@@ -888,7 +888,15 @@ $('#rank-chip').addEventListener('click', openProfile);
 $('#profile-close').addEventListener('click', () => $('#profile').classList.add('hidden'));
 $('#profile').addEventListener('click', (e) => { if (e.target.id === 'profile') $('#profile').classList.add('hidden'); });
 $('#btn-locate').addEventListener('click', () => locate());
+$('#btn-refresh').addEventListener('click', forceRefresh);
 $('#btn-add').addEventListener('click', startAddMode);
+
+// この地図を更新: 表示範囲のDB＋OSMのPを取り直す
+function forceRefresh() {
+  osmCoverage = null; // OSMキャッシュを無効化して確実に再取得
+  toast('この地図を更新しています…');
+  loadLots();
+}
 $('#btn-cancel-add').addEventListener('click', stopAddMode);
 $('#modal-close').addEventListener('click', closeForm);
 $('#btn-form-cancel').addEventListener('click', closeForm);
