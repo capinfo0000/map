@@ -5,12 +5,25 @@
  * ローカル検証では router.php 経由でここに到達する。
  */
 
+// 内部エラー詳細を画面に出さない（ログにのみ記録）
+ini_set('display_errors', '0');
+
 require __DIR__ . '/../lib/estimate.php';
 require __DIR__ . '/../lib/helpers.php';
 require __DIR__ . '/../lib/trust.php';
 require __DIR__ . '/../lib/reputation.php';
 require __DIR__ . '/../lib/overpass.php';
 require __DIR__ . '/../lib/db.php';
+
+// 予期しない例外は一般的な 500 で返す（内部情報を漏らさない）
+set_exception_handler(function ($e) {
+    error_log('[parking-map] ' . $e);
+    if (!headers_sent()) {
+        http_response_code(500);
+        header('Content-Type: application/json; charset=utf-8');
+    }
+    echo json_encode(['error' => 'サーバーエラーが発生しました'], JSON_UNESCAPED_UNICODE);
+});
 
 $configPath = __DIR__ . '/../lib/config.php';
 if (!file_exists($configPath)) {
@@ -23,7 +36,8 @@ $UPLOAD_DIR = __DIR__ . '/../uploads';
 try {
     $db = new DB($config);
 } catch (Throwable $e) {
-    json_error('データベースに接続できません: ' . $e->getMessage(), 500);
+    error_log('[parking-map] DB connect failed: ' . $e->getMessage());
+    json_error('サーバーエラーが発生しました（データベース接続）', 500);
 }
 
 // ---- ルート解決 ----
@@ -94,9 +108,20 @@ function require_admin(): void
 
 function start_session(): void
 {
-    if (session_status() !== PHP_SESSION_ACTIVE) {
-        session_start();
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        return;
     }
+    // HTTPS のときだけ Secure を付ける（ローカル http 検証を壊さない）
+    $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+    session_set_cookie_params([
+        'lifetime'  => 0,
+        'path'      => '/',
+        'httponly'  => true,       // JS から Cookie を読めなくする
+        'samesite'  => 'Lax',      // 他サイトからの送信を制限（CSRF 緩和）
+        'secure'    => $secure,    // HTTPS のみ送信
+    ]);
+    session_start();
 }
 
 /** ログイン中アカウントの token を返す（未ログインなら null）。 */

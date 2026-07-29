@@ -224,6 +224,13 @@ button { font-family: inherit; cursor: pointer; }
 /* ハニーポット（画面外に隠す・スクリーンリーダーも読まない） */
 .hp-field { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
 .auth-card { max-width: 420px; }
+.auth-terms { font-size: 11px; color: var(--muted); margin: 10px 0 0; }
+.terms-link {
+  position: fixed; left: 8px; bottom: 4px; z-index: 500;
+  font-size: 10px; color: #9aa4b0; text-decoration: none; background: rgba(255,255,255,.6);
+  padding: 1px 6px; border-radius: 6px;
+}
+.terms-link:hover { color: var(--brand); }
 .auth-card .admin-note a, .admin-lead { color: var(--muted); }
 
 .hidden { display: none !important; }
