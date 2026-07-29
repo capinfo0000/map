@@ -100,6 +100,10 @@ if ($route === '/lots' && $method === 'POST') {
     if (isset($photo['error'])) {
         json_error($photo['error'], 400);
     }
+    // 写真は必須（情報の信頼性を担保するため、写真なしの登録は受け付けない）
+    if (empty($photo['filename'])) {
+        json_error('料金看板の写真を添付してください（写真は必須です）', 400);
+    }
     $data = $parsed['data'];
     $data['photo']  = $photo['filename'];
     $data['source'] = 'user';
@@ -131,6 +135,10 @@ if (preg_match('#^/lots/(\d+)$#', $route, $m) && $method === 'POST') {
     }
     if (isset($photo['error'])) {
         json_error($photo['error'], 400);
+    }
+    // 編集でも写真は必須。新しい写真が無く、既存写真も無ければ拒否
+    if (empty($photo['filename']) && empty($existing['photo'])) {
+        json_error('料金看板の写真を添付してください（写真は必須です）', 400);
     }
     $data = $parsed['data'];
     $data['photo'] = $photo['filename']; // null なら維持（db 側で COALESCE）

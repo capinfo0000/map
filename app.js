@@ -461,8 +461,58 @@ function openForm(lot, pos) {
     form.lat.value = pos.lat;
     form.lng.value = pos.lng;
     $('#pos-label').textContent = `${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}`;
+    // 位置から住所・名称を自動取得して入力補助（無料のOSM。失敗時は無言でスキップ）
+    autofillFromLocation(pos.lat, pos.lng);
   }
   $('#modal').classList.remove('hidden');
+}
+
+// OpenStreetMap(Nominatim) の逆ジオコーディングで住所・名称をフォームに自動入力。
+// 無料・APIキー不要。取得結果はあくまで候補で、本人が確認・修正して登録する。
+async function autofillFromLocation(lat, lng) {
+  const form = $('#lot-form');
+  const addrInput = form.address;
+  const nameInput = form.name;
+  const prevPlaceholder = addrInput.placeholder;
+  addrInput.placeholder = '住所を取得中…';
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 6000); // ネットワーク停滞時のフォールバック
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`
+      + `&zoom=18&addressdetails=1&namedetails=1&accept-language=ja`;
+    const res = await fetch(url, { headers: { Accept: 'application/json' }, signal: ctrl.signal });
+    if (!res.ok) throw new Error('geocode failed');
+    const d = await res.json();
+    // 住所（自動取得。ユーザーが未入力のときだけ埋める）
+    const addr = buildJpAddress(d);
+    if (addr && !addrInput.value.trim()) addrInput.value = addr;
+    // 駐車場名（近くの施設名/POI名が取れて、未入力のときだけ候補として入れる）
+    const nm = (d.namedetails && (d.namedetails['name:ja'] || d.namedetails.name)) || d.name || '';
+    if (nm && !nameInput.value.trim()) nameInput.value = nm.slice(0, 120);
+  } catch (e) {
+    /* 取得できなくても手入力でOK。無言でスキップ */
+  } finally {
+    clearTimeout(timer);
+    addrInput.placeholder = prevPlaceholder;
+  }
+}
+
+// Nominatim の address 構造から日本語の住所文字列を組み立てる
+function buildJpAddress(d) {
+  const a = d.address || {};
+  // 日本の住所は「都道府県→市区町村→町名→番地」の順で並べる
+  const parts = [
+    a.province || a.state,
+    a.city || a.town || a.village || a.county,
+    a.suburb || a.city_district || a.neighbourhood,
+    a.quarter,
+    a.road,
+    a.house_number,
+  ].filter(Boolean);
+  const joined = parts.join('');
+  if (joined) return joined;
+  // 構造化が取れない場合は display_name 先頭部分を利用
+  return d.display_name ? d.display_name.split(',').slice(0, 3).reverse().join('') : '';
 }
 function closeForm() {
   $('#modal').classList.add('hidden');
@@ -518,6 +568,14 @@ $('#lot-form').addEventListener('submit', async (e) => {
 
   if (!form.name.value.trim()) {
     errEl.textContent = '駐車場名を入力してください';
+    return errEl.classList.remove('hidden');
+  }
+
+  // 写真は必須（新規は写真ファイル、編集は既存写真があればOK）
+  const editingLot = state.editingId ? state.lots.find((l) => l.id === state.editingId) : null;
+  const hasExistingPhoto = editingLot && editingLot.photo;
+  if (!form.photo.files[0] && !hasExistingPhoto) {
+    errEl.textContent = '料金看板の写真を添付してください（写真は必須です）';
     return errEl.classList.remove('hidden');
   }
 
