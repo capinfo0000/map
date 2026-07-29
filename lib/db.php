@@ -18,7 +18,7 @@ class DB
     // （確認された良い情報を守りつつ、荒らし投稿を管理者なしで隠す）
     const HIDE_MIN_REPORTS = 5;
     // 「不適切」通報がこの数に達したら即非表示（ログイン必須で通報が信頼できる前提）
-    const HIDE_INAPPROPRIATE = 2;
+    const HIDE_INAPPROPRIATE = 10;
 
     public function __construct(array $config)
     {
