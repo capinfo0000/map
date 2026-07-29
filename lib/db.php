@@ -17,6 +17,8 @@ class DB
     // 自動非表示のしきい値: 報告がこの数以上たまり、かつ確認数を上回ったら非表示にする
     // （確認された良い情報を守りつつ、荒らし投稿を管理者なしで隠す）
     const HIDE_MIN_REPORTS = 5;
+    // 「不適切」通報がこの数に達したら即非表示（ログイン必須で通報が信頼できる前提）
+    const HIDE_INAPPROPRIATE = 10;
 
     public function __construct(array $config)
     {
@@ -74,6 +76,7 @@ class DB
                 photo             VARCHAR(255),
                 nickname          VARCHAR(40),
                 source            VARCHAR(20),
+                rates             TEXT,
                 created_by_token  VARCHAR(80),
                 created_at        VARCHAR(30) NOT NULL,
                 updated_at        VARCHAR(30) NOT NULL,
@@ -106,12 +109,42 @@ class DB
             )$engine
         ");
 
+        $this->pdo->exec("
+            CREATE TABLE IF NOT EXISTS accounts (
+                id            $auto,
+                username      VARCHAR(40) NOT NULL,
+                password_hash VARCHAR(255) NOT NULL,
+                token         VARCHAR(80) NOT NULL,
+                created_at    VARCHAR(30) NOT NULL,
+                UNIQUE (username),
+                UNIQUE (token)
+            )$engine
+        ");
+
+        $this->pdo->exec("
+            CREATE TABLE IF NOT EXISTS rate_hits (
+                id         $auto,
+                bucket     VARCHAR(80) NOT NULL,
+                created_at VARCHAR(30) NOT NULL
+            )$engine
+        ");
+        try {
+            $sql = 'CREATE INDEX idx_rate_bucket ON rate_hits (bucket, created_at)';
+            if ($this->driver === 'sqlite') {
+                $sql = str_replace('CREATE INDEX', 'CREATE INDEX IF NOT EXISTS', $sql);
+            }
+            $this->pdo->exec($sql);
+        } catch (PDOException $e) {
+            // 既存なら無視
+        }
+
         // 既存 DB 向け: 列が無ければ追加（重複エラーは無視）
         foreach ([
             'ALTER TABLE lots ADD COLUMN created_by_token VARCHAR(80)',
             'ALTER TABLE reports ADD COLUMN was_stale INT NOT NULL DEFAULT 0',
             'ALTER TABLE lots ADD COLUMN hidden INT NOT NULL DEFAULT 0',
             'ALTER TABLE lots ADD COLUMN hidden_at VARCHAR(30)',
+            'ALTER TABLE lots ADD COLUMN rates TEXT',
         ] as $sql) {
             try {
                 $this->pdo->exec($sql);
@@ -153,9 +186,9 @@ class DB
         $now = self::nowIso();
         $stmt = $this->pdo->prepare("
             INSERT INTO lots (name, lat, lng, address, hourly_rate, max_rate, fee_note,
-                              capacity, photo, nickname, source, created_by_token, created_at, updated_at)
+                              capacity, photo, nickname, source, rates, created_by_token, created_at, updated_at)
             VALUES (:name, :lat, :lng, :address, :hourly_rate, :max_rate, :fee_note,
-                    :capacity, :photo, :nickname, :source, :created_by_token, :created_at, :updated_at)
+                    :capacity, :photo, :nickname, :source, :rates, :created_by_token, :created_at, :updated_at)
         ");
         $stmt->execute([
             ':name' => $d['name'], ':lat' => $d['lat'], ':lng' => $d['lng'],
@@ -163,6 +196,7 @@ class DB
             ':max_rate' => $d['max_rate'], ':fee_note' => $d['fee_note'],
             ':capacity' => $d['capacity'], ':photo' => $d['photo'],
             ':nickname' => $d['nickname'], ':source' => $d['source'] ?? 'user',
+            ':rates' => $d['rates'] ?? null,
             ':created_by_token' => $d['created_by_token'] ?? null,
             ':created_at' => $now, ':updated_at' => $now,
         ]);
@@ -204,7 +238,8 @@ class DB
             UPDATE lots SET
                 name = :name, lat = :lat, lng = :lng, address = :address,
                 hourly_rate = :hourly_rate, max_rate = :max_rate, fee_note = :fee_note,
-                capacity = :capacity, nickname = :nickname,
+                capacity = :capacity, nickname = :nickname, rates = :rates,
+                source = :source,
                 photo = COALESCE(:photo, photo),
                 updated_at = :updated_at
             WHERE id = :id
@@ -214,6 +249,8 @@ class DB
             ':address' => $d['address'], ':hourly_rate' => $d['hourly_rate'],
             ':max_rate' => $d['max_rate'], ':fee_note' => $d['fee_note'],
             ':capacity' => $d['capacity'], ':nickname' => $d['nickname'],
+            ':rates' => $d['rates'] ?? null,
+            ':source' => $d['source'] ?? 'user', // 上書き編集された情報は user 扱い（赤ピン）
             ':photo' => $d['photo'], ':updated_at' => $now, ':id' => $id,
         ]);
         return $this->getLot($id);
@@ -255,6 +292,17 @@ class DB
                      WHERE id = ? AND hidden = 0
                        AND report_count >= ? AND report_count > confirm_count"
                 )->execute([$now, $lotId, self::HIDE_MIN_REPORTS]);
+                // 不適切通報は少数でも即非表示（ログイン必須で通報が信頼できるため）
+                if ($comment === 'inappropriate') {
+                    $ic = $this->pdo->prepare(
+                        "SELECT COUNT(*) AS c FROM reports WHERE lot_id = ? AND kind = 'report' AND comment = 'inappropriate'"
+                    );
+                    $ic->execute([$lotId]);
+                    if ((int)$ic->fetch()['c'] >= self::HIDE_INAPPROPRIATE) {
+                        $this->pdo->prepare('UPDATE lots SET hidden = 1, hidden_at = ? WHERE id = ? AND hidden = 0')
+                            ->execute([$now, $lotId]);
+                    }
+                }
             }
             $this->pdo->commit();
         } catch (PDOException $e) {
@@ -273,6 +321,106 @@ class DB
     public function countLots(): int
     {
         return (int)$this->pdo->query('SELECT COUNT(*) AS c FROM lots')->fetch()['c'];
+    }
+
+    // ---- レート制限 ----
+
+    /**
+     * $bucket について直近 $windowSec 秒間の回数が $limit 未満なら記録して true。
+     * 上限に達していれば false（＝拒否）。
+     */
+    public function rateAllow(string $bucket, int $limit, int $windowSec): bool
+    {
+        $now = time();
+        $cutoff = gmdate('Y-m-d\TH:i:s\Z', $now - $windowSec);
+        $this->pdo->prepare('DELETE FROM rate_hits WHERE bucket = ? AND created_at < ?')
+            ->execute([$bucket, $cutoff]);
+        $c = $this->pdo->prepare('SELECT COUNT(*) AS c FROM rate_hits WHERE bucket = ?');
+        $c->execute([$bucket]);
+        if ((int)$c->fetch()['c'] >= $limit) {
+            return false;
+        }
+        $this->pdo->prepare('INSERT INTO rate_hits (bucket, created_at) VALUES (?, ?)')
+            ->execute([$bucket, gmdate('Y-m-d\TH:i:s\Z', $now)]);
+        return true;
+    }
+
+    /** 古いレート記録を削除（cleanup 用）。@return int 削除件数 */
+    public function pruneRateHits(int $olderThanSec = 86400): int
+    {
+        $cutoff = gmdate('Y-m-d\TH:i:s\Z', time() - $olderThanSec);
+        $st = $this->pdo->prepare('DELETE FROM rate_hits WHERE created_at < ?');
+        $st->execute([$cutoff]);
+        return $st->rowCount();
+    }
+
+    // ---- アカウント（ログイン） ----
+
+    /** アカウント作成。@return array{ok:bool, reason?:string, account?:array} */
+    public function createAccount(string $username, string $passwordHash, string $token): array
+    {
+        $now = gmdate('Y-m-d\TH:i:s\Z');
+        try {
+            $this->pdo->prepare(
+                'INSERT INTO accounts (username, password_hash, token, created_at) VALUES (?, ?, ?, ?)'
+            )->execute([$username, $passwordHash, $token, $now]);
+        } catch (PDOException $e) {
+            if ($this->isUniqueViolation($e)) {
+                return ['ok' => false, 'reason' => 'duplicate'];
+            }
+            throw $e;
+        }
+        return ['ok' => true, 'account' => $this->getAccountByToken($token)];
+    }
+
+    public function getAccountByUsername(string $username): ?array
+    {
+        $st = $this->pdo->prepare('SELECT * FROM accounts WHERE username = ?');
+        $st->execute([$username]);
+        return $st->fetch() ?: null;
+    }
+
+    public function getAccountByToken(string $token): ?array
+    {
+        $st = $this->pdo->prepare('SELECT * FROM accounts WHERE token = ?');
+        $st->execute([$token]);
+        return $st->fetch() ?: null;
+    }
+
+    // ---- 管理（admin） ----
+
+    /** 全駐車場（非表示含む）を新しい順に返す。 */
+    public function listAllLots(int $limit = 500): array
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM lots ORDER BY updated_at DESC LIMIT ?');
+        $stmt->bindValue(1, $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll();
+    }
+
+    /** 駐車場を完全削除（報告も削除）。@return ?string 削除した写真ファイル名 */
+    public function deleteLot(int $id): ?string
+    {
+        $lot = $this->getLot($id);
+        if (!$lot) {
+            return null;
+        }
+        $this->pdo->beginTransaction();
+        $this->pdo->prepare('DELETE FROM reports WHERE lot_id = ?')->execute([$id]);
+        $this->pdo->prepare('DELETE FROM lots WHERE id = ?')->execute([$id]);
+        $this->pdo->commit();
+        return $lot['photo'] ?: null;
+    }
+
+    /** 非表示/復活を切り替える。 */
+    public function setHidden(int $id, bool $hidden): ?array
+    {
+        if (!$this->getLot($id)) {
+            return null;
+        }
+        $this->pdo->prepare('UPDATE lots SET hidden = ?, hidden_at = ? WHERE id = ?')
+            ->execute([$hidden ? 1 : 0, $hidden ? gmdate('Y-m-d\TH:i:s\Z') : null, $id]);
+        return $this->getLot($id);
     }
 
     // ---- メンテナンス（画像・不要データの掃除） ----
@@ -346,12 +494,19 @@ class DB
             return (int)($st->fetch()['c'] ?? 0);
         };
 
-        $u = $this->pdo->prepare('SELECT nickname FROM users WHERE token = ?');
-        $u->execute([$token]);
-        $urow = $u->fetch();
+        // ニックネームはアカウント(username)から。無ければ旧users.nicknameにフォールバック
+        $a = $this->pdo->prepare('SELECT username FROM accounts WHERE token = ?');
+        $a->execute([$token]);
+        $arow = $a->fetch();
+        $nickname = $arow['username'] ?? null;
+        if ($nickname === null) {
+            $u = $this->pdo->prepare('SELECT nickname FROM users WHERE token = ?');
+            $u->execute([$token]);
+            $nickname = ($u->fetch()['nickname'] ?? null);
+        }
 
         return [
-            'nickname'         => $urow['nickname'] ?? null,
+            'nickname'         => $nickname,
             'posts'            => $one('SELECT COUNT(*) AS c FROM lots WHERE created_by_token = ?', [$token]),
             'photoPosts'       => $one("SELECT COUNT(*) AS c FROM lots WHERE created_by_token = ? AND photo IS NOT NULL AND photo <> ''", [$token]),
             'votes'            => $one('SELECT COUNT(*) AS c FROM reports WHERE client_token = ?', [$token]),

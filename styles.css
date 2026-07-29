@@ -149,6 +149,18 @@ button { font-family: inherit; cursor: pointer; }
 .req { color: var(--red); font-style: normal; font-size: 11px; }
 .hint-inline { color: var(--amber); font-style: normal; font-size: 11px; font-weight: 600; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* ---- rate rows (可変料金) ---- */
+.rate-rows { display: flex; flex-direction: column; gap: 8px; }
+.rate-row { display: flex; align-items: center; gap: 6px; }
+.rate-row input[type=number] { width: 68px; font: inherit; font-weight: 500; color: var(--ink); padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #fbfcfd; }
+.rate-row input[type=time] { width: 92px; font: inherit; font-weight: 500; color: var(--ink); padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fbfcfd; }
+.add-rate-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.rate-row select { font: inherit; font-weight: 500; color: var(--ink); padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #fbfcfd; }
+.rate-row .yen-suffix { color: var(--muted); font-size: 13px; }
+.rate-row .rate-max { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); white-space: nowrap; font-weight: 600; }
+.rate-row .rate-del { background: #f0f2f5; border: none; color: var(--muted); border-radius: 8px; width: 30px; height: 32px; font-size: 16px; flex: none; }
+.add-rate-btn { align-self: flex-start; margin-top: 8px; background: #eef4ff; color: var(--brand); border: 1px dashed #b9d3ff; border-radius: 10px; padding: 8px 14px; font-size: 13px; font-weight: 700; }
 .photo-preview { margin-top: 8px; }
 .photo-preview img { max-width: 100%; max-height: 200px; border-radius: 10px; }
 .pos-note { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
@@ -156,7 +168,9 @@ button { font-family: inherit; cursor: pointer; }
 .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
 
 /* ---- popup ---- */
-.popup-photo { width: 100%; max-height: 130px; object-fit: cover; border-radius: 8px; margin-bottom: 6px; cursor: zoom-in; }
+.popup-photo { width: 100%; max-height: 200px; object-fit: cover; border-radius: 8px; margin-bottom: 2px; cursor: zoom-in; }
+.popup-photo-cap { font-size: 11px; color: var(--brand); font-weight: 600; margin-bottom: 6px; }
+.est-note { font-size: 10.5px; color: var(--gray); font-weight: 600; }
 .popup-name { font-weight: 700; font-size: 15px; margin: 0 0 4px; }
 .popup-price { font-size: 13px; margin: 2px 0; }
 .popup-price strong { color: var(--brand); }
@@ -188,11 +202,29 @@ button { font-family: inherit; cursor: pointer; }
 .pin-gray { background: var(--gray); }
 .pin-gold { background: #e0a400; }
 .pin-gold span, .pin-cert span { color: #fff; }
+.pin-osm { background: var(--gray); opacity: 0.9; border-style: dashed; } /* 地図上のP（未登録） */
 
 /* 信頼度バッジ */
 .badge-cert { background: #fdf0cf; color: #8a5a00; }
 .badge-confirmed { background: #e5f6ec; color: var(--green); }
 .badge-info { background: #e7effe; color: var(--brand); }
+
+.osm-loading {
+  position: fixed; right: 12px; bottom: 16px; z-index: 1100;
+  background: rgba(28,36,48,.9); color: #fff; padding: 7px 12px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; box-shadow: var(--shadow); pointer-events: none;
+}
+
+/* 著作権表記は小さく控えめに（© OpenStreetMap はライセンス上必須） */
+.leaflet-control-attribution {
+  font-size: 9px; background: rgba(255,255,255,.6); padding: 0 4px; color: #888;
+}
+.leaflet-control-attribution a { color: #888; }
+
+/* ハニーポット（画面外に隠す・スクリーンリーダーも読まない） */
+.hp-field { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.auth-card { max-width: 420px; }
+.auth-card .admin-note a, .admin-lead { color: var(--muted); }
 
 .hidden { display: none !important; }
 

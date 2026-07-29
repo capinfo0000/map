@@ -8,6 +8,8 @@
  *    （報告多数で自動非表示になったスパム等を、猶予期間つきで自動削除）
  * 2) どの駐車場からも参照されていない孤立画像ファイルを uploads/ から削除
  *    （写真差し替えや削除で残った古い画像を掃除してストレージを節約）
+ * 3) 古い OSM 駐車場キャッシュ（cache/parking_*.json）を削除
+ *    （キャッシュTTLは30日。30日以上使われていないものは消してディスクを節約）
  *
  * コアサーバーの cron に「毎日1回」登録しておけば、管理者の手作業なしで
  * ストレージが自動で片付きます。
@@ -27,11 +29,14 @@ if (!file_exists($configPath)) {
 }
 $config = require $configPath;
 $UPLOAD_DIR = __DIR__ . '/../uploads';
+$CACHE_DIR  = __DIR__ . '/../cache';
 
 // 非表示から何日で完全削除するか
 $PURGE_DAYS = (int)($config['purge_hidden_days'] ?? 30);
 // 孤立ファイルは作成直後の巻き込み削除を防ぐため、この分数より古いものだけ対象
 $ORPHAN_MIN_AGE_MIN = 60;
+// OSMキャッシュはこの時間より古いものを削除（TTL30日に合わせて30日）
+$CACHE_MAX_AGE_HOURS = 24 * 30;
 
 $db = new DB($config);
 
@@ -70,6 +75,24 @@ if (is_dir($UPLOAD_DIR)) {
     }
 }
 
+// 3) 古い OSM 駐車場キャッシュの削除
+$deletedCache = 0;
+if (is_dir($CACHE_DIR)) {
+    $cutoff = time() - $CACHE_MAX_AGE_HOURS * 3600;
+    foreach (glob($CACHE_DIR . '/parking_*.json') ?: [] as $path) {
+        if (is_file($path) && filemtime($path) < $cutoff) {
+            if (@unlink($path)) {
+                $deletedCache++;
+            }
+        }
+    }
+}
+
+// 4) 古いレート制限記録の削除（1日より前）
+$prunedRate = $db->pruneRateHits(86400);
+
 echo "掃除完了:\n";
 echo "  非表示から{$PURGE_DAYS}日超で削除した駐車場: {$purged['lots']} 件（画像 {$purgedFiles} 件）\n";
 echo "  孤立画像の削除: {$deletedOrphans} 件\n";
+echo "  古いキャッシュの削除: {$deletedCache} 件\n";
+echo "  古いレート記録の削除: {$prunedRate} 件\n";

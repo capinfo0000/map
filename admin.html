@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>管理 | みんなの駐車場マップ</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🅿️</text></svg>" />
+  <link rel="stylesheet" href="styles.css?v=20260729c" />
+  <link rel="stylesheet" href="admin.css?v=20260729c" />
+</head>
+<body>
+  <div class="admin-wrap">
+    <h1 class="admin-title">🅿️ 管理画面</h1>
+
+    <!-- ログイン -->
+    <div id="login-box" class="admin-card hidden">
+      <p class="admin-lead">管理パスワードを入力してください。</p>
+      <form id="login-form" class="admin-login">
+        <input id="pw" type="password" placeholder="パスワード" autocomplete="current-password" />
+        <button type="submit" class="primary-btn">ログイン</button>
+      </form>
+      <p id="login-error" class="form-error hidden"></p>
+      <p class="admin-note"><a href="/">← 地図に戻る</a></p>
+    </div>
+
+    <!-- 一覧 -->
+    <div id="list-box" class="hidden">
+      <div class="admin-bar">
+        <span id="admin-count" class="admin-count"></span>
+        <span>
+          <a href="/" class="ghost-btn">地図</a>
+          <button id="btn-reload" class="ghost-btn">再読込</button>
+          <button id="btn-logout" class="ghost-btn">ログアウト</button>
+        </span>
+      </div>
+      <div id="admin-list" class="admin-list"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="admin.js?v=20260729c"></script>
+</body>
+</html>
