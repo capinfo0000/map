@@ -36,6 +36,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 let userMarker = null;
+let accuracyCircle = null;
 
 // ---- ユーティリティ ----
 const $ = (sel) => document.querySelector(sel);
@@ -94,22 +95,9 @@ function trustHint(lot) {
   return `<p class="popup-note">🤝 あと ${t.next} 人の「✅正しい」で「${goal}」になります</p>`;
 }
 
-// ピン色: 信頼度（要確認=赤/要更新=灰/認定=金）を優先し、それ以外は料金帯で色分け
+// ピン色: 初期データ(サンプル・未編集)=グレー / ユーザーが登録・上書きした情報=赤
 function pinClass(lot) {
-  const level = lot.trust && lot.trust.level;
-  if (level === 'flagged') return 'pin-red';
-  if (level === 'stale') return 'pin-gray';
-  if (level === 'certified') return 'pin-gold';
-  return priceColor(lot);
-}
-
-// 料金帯からピン色（安い=緑/中=橙/高=赤/不明=灰）
-function priceColor(lot) {
-  const v = lot.estimate;
-  if (v == null) return 'pin-gray';
-  if (v <= 300) return 'pin-green';
-  if (v <= 800) return 'pin-amber';
-  return 'pin-red';
+  return lot.source === 'osm' ? 'pin-gray' : 'pin-red';
 }
 
 function distanceKm(a, b) {
@@ -399,30 +387,57 @@ function locate(options = {}) {
       return resolve(false);
     }
     if (!options.initial) toast('現在地を取得中…');
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const { latitude: lat, longitude: lng } = pos.coords;
-        state.userPos = { lat, lng };
-        map.setView([lat, lng], 16);
-        if (userMarker) map.removeLayer(userMarker);
-        userMarker = L.circleMarker([lat, lng], {
-          radius: 8, color: '#fff', weight: 2, fillColor: '#1573ff', fillOpacity: 1,
-        }).addTo(map).bindPopup('現在地');
-        if (options.initial) {
-          // 初回は「近い順」に切り替えて周辺を初期表示
-          state.sort = 'distance';
-          setActiveSortButton('distance');
-        }
-        loadLots(); // moveend でも走るが、距離ソート反映のため明示的に
-        resolve(true);
-      },
-      () => {
+    let done = false;
+    let best = null;       // 最も精度の良い測位結果を採用
+    let recentered = false; // この呼び出しで一度だけ地図を移動＆ソート切替
+    let watchId = null;
+    const apply = () => {
+      applyUserPos(best, options, !recentered);
+      recentered = true;
+    };
+    const finish = () => {
+      if (done) return;
+      done = true;
+      if (watchId != null) navigator.geolocation.clearWatch(watchId);
+      if (best) { apply(); resolve(true); }
+      else {
         if (!options.initial) toast('現在地を取得できませんでした（位置情報の許可を確認してください）');
         resolve(false);
+      }
+    };
+    // watchPosition で数回受信し、accuracy が最も良いものを使う（初回のブレを軽減）
+    watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        if (!best || pos.coords.accuracy < best.coords.accuracy) best = pos;
+        apply();                                  // 逐次反映（だんだん正確になる）
+        if (best.coords.accuracy <= 30) finish(); // 十分な精度で確定
       },
-      { enableHighAccuracy: true, timeout: 8000 }
+      () => { if (!best) finish(); },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
+    setTimeout(finish, 8000); // 最長8秒でその時点のベストに確定
   });
+}
+
+function applyUserPos(pos, options, recenter) {
+  const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+  state.userPos = { lat, lng };
+  if (recenter) map.setView([lat, lng], 16);
+  if (userMarker) map.removeLayer(userMarker);
+  if (accuracyCircle) map.removeLayer(accuracyCircle);
+  // 精度の円（この範囲のどこかにいる、の目安）
+  accuracyCircle = L.circle([lat, lng], {
+    radius: Math.min(accuracy || 50, 500), color: '#1573ff', weight: 1,
+    fillColor: '#1573ff', fillOpacity: 0.12,
+  }).addTo(map);
+  userMarker = L.circleMarker([lat, lng], {
+    radius: 8, color: '#fff', weight: 2, fillColor: '#1573ff', fillOpacity: 1,
+  }).addTo(map).bindPopup(`現在地（誤差 約${Math.round(accuracy || 0)}m）`);
+  if (options.initial && recenter) {
+    state.sort = 'distance';
+    setActiveSortButton('distance');
+  }
+  loadLots();
 }
 
 function setActiveSortButton(sort) {

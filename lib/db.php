@@ -208,6 +208,7 @@ class DB
                 name = :name, lat = :lat, lng = :lng, address = :address,
                 hourly_rate = :hourly_rate, max_rate = :max_rate, fee_note = :fee_note,
                 capacity = :capacity, nickname = :nickname, rates = :rates,
+                source = :source,
                 photo = COALESCE(:photo, photo),
                 updated_at = :updated_at
             WHERE id = :id
@@ -218,6 +219,7 @@ class DB
             ':max_rate' => $d['max_rate'], ':fee_note' => $d['fee_note'],
             ':capacity' => $d['capacity'], ':nickname' => $d['nickname'],
             ':rates' => $d['rates'] ?? null,
+            ':source' => $d['source'] ?? 'user', // 上書き編集された情報は user 扱い（赤ピン）
             ':photo' => $d['photo'], ':updated_at' => $now, ':id' => $id,
         ]);
         return $this->getLot($id);

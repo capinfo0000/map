@@ -150,6 +150,7 @@ if (preg_match('#^/lots/(\d+)$#', $route, $m) && $method === 'POST') {
     }
     $data = $parsed['data'];
     $data['photo'] = $photo['filename']; // null なら維持（db 側で COALESCE）
+    $data['source'] = 'user'; // 上書き編集された情報はユーザー情報扱い（地図で赤ピン）
     $rates = process_rates($_POST['rates'] ?? null);
     $data['rates'] = $rates['json'];
     if ($rates['json'] !== null) {
