@@ -4,7 +4,7 @@
  * 2回目以降は誰がアクセスしてもキャッシュから高速に返せる（Overpass 負荷も軽減）。
  */
 
-const OVERPASS_CACHE_TTL = 21600; // キャッシュ有効期間（秒）＝6時間
+const OVERPASS_CACHE_TTL = 2592000; // キャッシュ有効期間（秒）＝30日（駐車場の位置はほぼ変わらないため長め）
 const OVERPASS_MAX_SPAN  = 0.4;   // これより広い範囲はOverpass保護のためリクエストしない（約44km）
 const OVERPASS_LIMIT     = 500;   // 取得件数の上限（多いエリアで片側が欠けないよう十分大きく）
 
