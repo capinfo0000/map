@@ -236,10 +236,13 @@ function unitLabel(m) {
   return map[Number(m)] || `${m}分`;
 }
 
-// 料金行を「10分¥100・60分¥400・24時間¥800(最大)」の形に整形。無ければ旧hourly/maxで代替
+// 料金行を「10分¥100・24時間¥800(最大)・20:00〜08:00 ¥500(最大)」の形に整形。無ければ旧hourly/maxで代替
 function ratesText(lot) {
   if (lot.rates && lot.rates.length) {
-    return lot.rates.map((r) => `${unitLabel(r.minutes)}${yen(r.yen)}${r.is_max ? '(最大)' : ''}`).join(' ・ ');
+    return lot.rates.map((r) => {
+      if (r.from && r.to) return `${r.from}〜${r.to} ${yen(r.yen)}(最大)`;
+      return `${unitLabel(r.minutes)}${yen(r.yen)}${r.is_max ? '(最大)' : ''}`;
+    }).join(' ・ ');
   }
   const parts = [];
   if (lot.hourly_rate != null) parts.push(`時間${yen(lot.hourly_rate)}`);
@@ -454,6 +457,7 @@ const RATE_UNITS = [
   { v: 1440, label: '24時間' },
 ];
 
+// 従量/最大の行
 function addRateRow(minutes = 60, yen = '', isMax = false) {
   const row = document.createElement('div');
   row.className = 'rate-row';
@@ -468,11 +472,29 @@ function addRateRow(minutes = 60, yen = '', isMax = false) {
   $('#rate-rows').appendChild(row);
 }
 
+// 時間帯の最大料金（夜間など）の行
+function addRateWindowRow(from = '20:00', to = '08:00', yen = '') {
+  const row = document.createElement('div');
+  row.className = 'rate-row rate-row--window';
+  row.innerHTML = `
+    <input class="rate-from" type="time" value="${from}" />
+    <span class="yen-suffix">〜</span>
+    <input class="rate-to" type="time" value="${to}" />
+    <input class="rate-yen" type="number" min="0" inputmode="numeric" placeholder="金額" value="${yen}" />
+    <span class="yen-suffix">円 最大</span>
+    <button type="button" class="rate-del" title="削除">×</button>`;
+  row.querySelector('.rate-del').addEventListener('click', () => row.remove());
+  $('#rate-rows').appendChild(row);
+}
+
 function resetRateRows(rates) {
   const box = $('#rate-rows');
   box.innerHTML = '';
   if (rates && rates.length) {
-    rates.forEach((r) => addRateRow(Number(r.minutes) || 60, r.yen ?? '', !!r.is_max));
+    rates.forEach((r) => {
+      if (r.from && r.to) addRateWindowRow(r.from, r.to, r.yen ?? '');
+      else addRateRow(Number(r.minutes) || 60, r.yen ?? '', !!r.is_max);
+    });
   } else {
     // 既定で「60分」「24時間(最大)」の空行を用意
     addRateRow(60, '', false);
@@ -483,12 +505,20 @@ function resetRateRows(rates) {
 function gatherRates() {
   const rates = [];
   $('#rate-rows').querySelectorAll('.rate-row').forEach((row) => {
-    const minutes = Number(row.querySelector('.rate-unit').value);
     const yenRaw = row.querySelector('.rate-yen').value.trim();
-    if (yenRaw === '' || !minutes) return; // 金額未入力の行は無視
+    if (yenRaw === '') return; // 金額未入力の行は無視
     const yen = Number(yenRaw);
     if (!Number.isFinite(yen) || yen < 0) return;
-    rates.push({ minutes, yen: Math.round(yen), is_max: row.querySelector('.rate-ismax').checked });
+    if (row.classList.contains('rate-row--window')) {
+      const from = row.querySelector('.rate-from').value;
+      const to = row.querySelector('.rate-to').value;
+      if (!from || !to) return;
+      rates.push({ from, to, yen: Math.round(yen), is_max: true });
+    } else {
+      const minutes = Number(row.querySelector('.rate-unit').value);
+      if (!minutes) return;
+      rates.push({ minutes, yen: Math.round(yen), is_max: row.querySelector('.rate-ismax').checked });
+    }
   });
   return rates;
 }
@@ -725,6 +755,7 @@ $('#hours-seg').addEventListener('click', (e) => {
 });
 
 $('#btn-add-rate').addEventListener('click', () => addRateRow(60, '', false));
+$('#btn-add-rate-window').addEventListener('click', () => addRateWindowRow('20:00', '08:00', ''));
 $('#rank-chip').addEventListener('click', openProfile);
 $('#profile-close').addEventListener('click', () => $('#profile').classList.add('hidden'));
 $('#profile').addEventListener('click', (e) => { if (e.target.id === 'profile') $('#profile').classList.add('hidden'); });

@@ -154,6 +154,8 @@ button { font-family: inherit; cursor: pointer; }
 .rate-rows { display: flex; flex-direction: column; gap: 8px; }
 .rate-row { display: flex; align-items: center; gap: 6px; }
 .rate-row input[type=number] { width: 68px; font: inherit; font-weight: 500; color: var(--ink); padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #fbfcfd; }
+.rate-row input[type=time] { width: 92px; font: inherit; font-weight: 500; color: var(--ink); padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fbfcfd; }
+.add-rate-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .rate-row select { font: inherit; font-weight: 500; color: var(--ink); padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #fbfcfd; }
 .rate-row .yen-suffix { color: var(--muted); font-size: 13px; }
 .rate-row .rate-max { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); white-space: nowrap; font-weight: 600; }

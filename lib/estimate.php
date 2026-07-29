@@ -22,10 +22,24 @@ function toPositiveInt($v): ?int
     return $n < 0 ? null : $n;
 }
 
+/** "H:MM"/"HH:MM" を検証して返す。不正なら null。 */
+function normalizeTime($v): ?string
+{
+    if (!is_string($v) || $v === '') {
+        return null;
+    }
+    if (!preg_match('/^([01]?\d|2[0-3]):([0-5]\d)$/', trim($v), $m)) {
+        return null;
+    }
+    return sprintf('%02d:%s', (int)$m[1], $m[2]);
+}
+
 /**
- * rates 配列を正規化。各要素 {minutes>0, yen>=0, is_max:bool} のみ通す。
+ * rates 配列を正規化。2種類の行を許可する:
+ *  - 従量/最大行: {minutes>0, yen>=0, is_max:bool}
+ *  - 時間帯行(夜間など): {from:"HH:MM", to:"HH:MM", yen>=0, is_max:true}
  * @param mixed $rates 配列 or JSON文字列
- * @return array<int,array{minutes:int,yen:int,is_max:bool}>
+ * @return array<int,array>
  */
 function normalizeRates($rates): array
 {
@@ -40,12 +54,23 @@ function normalizeRates($rates): array
         if (!is_array($r)) {
             continue;
         }
-        $minutes = toPositiveInt($r['minutes'] ?? null);
         $yen = toPositiveInt($r['yen'] ?? null);
-        if (!$minutes || $minutes <= 0 || $yen === null) {
+        if ($yen === null) {
             continue;
         }
-        $out[] = ['minutes' => $minutes, 'yen' => $yen, 'is_max' => !empty($r['is_max'])];
+        $from = normalizeTime($r['from'] ?? null);
+        $to   = normalizeTime($r['to'] ?? null);
+        if ($from !== null && $to !== null) {
+            // 時間帯行（夜間などの最大料金）
+            $out[] = ['from' => $from, 'to' => $to, 'yen' => $yen, 'is_max' => true];
+        } else {
+            // 従量/最大行
+            $minutes = toPositiveInt($r['minutes'] ?? null);
+            if (!$minutes || $minutes <= 0) {
+                continue;
+            }
+            $out[] = ['minutes' => $minutes, 'yen' => $yen, 'is_max' => !empty($r['is_max'])];
+        }
         if (count($out) >= 12) {
             break; // 行数の上限
         }
@@ -66,6 +91,10 @@ function estimateFromRates(array $rates, float $hours): ?int
     $blockCosts = [];
     $capCosts = [];
     foreach ($rates as $r) {
+        // 時間帯行（夜間など）は入庫時刻が不明なため概算には含めない（表示のみ）
+        if (isset($r['from'])) {
+            continue;
+        }
         $cost = (int)ceil($total / $r['minutes']) * $r['yen'];
         if ($r['is_max']) {
             $capCosts[] = $cost;
@@ -121,7 +150,8 @@ function deriveComparable(array $rates): array
     $hourly = estimateFromRates($rates, 1.0);
     $caps = [];
     foreach ($rates as $r) {
-        if ($r['is_max']) {
+        // 終日の最大料金のみ（時間帯行は全日最大ではないので除外）
+        if ($r['is_max'] && !isset($r['from'])) {
             $caps[] = $r['yen'];
         }
     }
