@@ -202,6 +202,7 @@ button { font-family: inherit; cursor: pointer; }
 .pin-gray { background: var(--gray); }
 .pin-gold { background: #e0a400; }
 .pin-gold span, .pin-cert span { color: #fff; }
+.pin-osm { background: var(--gray); opacity: 0.9; border-style: dashed; } /* 地図上のP（未登録） */
 
 /* 信頼度バッジ */
 .badge-cert { background: #fdf0cf; color: #8a5a00; }

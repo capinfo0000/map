@@ -158,6 +158,7 @@ async function loadLots() {
 
   renderMarkers();
   renderList();
+  refreshOsmPins(); // 地図上の「P」(OSMの駐車場)をグレーピンで表示
 }
 
 // 地図移動で周辺を再取得（デバウンス）
@@ -165,6 +166,83 @@ let _moveTimer = null;
 function scheduleReload() {
   clearTimeout(_moveTimer);
   _moveTimer = setTimeout(loadLots, 400);
+}
+
+// ---- 地図上の「P」(OpenStreetMap の駐車場) をグレーピンで表示 ----
+const osmLayer = L.layerGroup().addTo(map);
+const osmCache = new Map(); // bboxキー -> 要素配列
+let osmFetching = false;
+
+function bboxKey(b) {
+  return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((x) => x.toFixed(3)).join(',');
+}
+
+async function refreshOsmPins() {
+  // ズームが浅いと数が多すぎるので、ある程度拡大したときだけ表示
+  if (map.getZoom() < 15) { osmLayer.clearLayers(); return; }
+  const b = map.getBounds();
+  const key = bboxKey(b);
+  let els = osmCache.get(key);
+  if (!els) {
+    if (osmFetching) return;
+    osmFetching = true;
+    try { els = await fetchOverpassParking(b); osmCache.set(key, els); }
+    catch (e) { els = []; }
+    finally { osmFetching = false; }
+  }
+  renderOsmPins(els);
+}
+
+async function fetchOverpassParking(b) {
+  const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
+  const q = `[out:json][timeout:20];(node["amenity"="parking"](${bbox});way["amenity"="parking"](${bbox}););out center 80;`;
+  const endpoints = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+  ];
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q) });
+      if (!res.ok) continue;
+      const d = await res.json();
+      return (d.elements || [])
+        .map((e) => ({
+          lat: e.lat != null ? e.lat : (e.center && e.center.lat),
+          lng: e.lon != null ? e.lon : (e.center && e.center.lon),
+          name: (e.tags && (e.tags['name:ja'] || e.tags.name)) || '',
+        }))
+        .filter((x) => x.lat != null && x.lng != null);
+    } catch (e) { /* 次のエンドポイントへ */ }
+  }
+  return [];
+}
+
+function renderOsmPins(els) {
+  osmLayer.clearLayers();
+  els.forEach((o) => {
+    // 既にDBにある駐車場（約30m以内）とは重複表示しない
+    const dup = state.lots.some((l) => distanceKm({ lat: o.lat, lng: o.lng }, l) < 0.03);
+    if (dup) return;
+    const icon = L.divIcon({
+      className: '',
+      html: '<div class="pin pin-gray pin-osm"><span>P</span></div>',
+      iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -28],
+    });
+    const m = L.marker([o.lat, o.lng], { icon });
+    m.bindPopup(osmPopupHtml(o));
+    osmLayer.addLayer(m);
+  });
+}
+
+function osmPopupHtml(o) {
+  const nm = o.name ? escapeHtml(o.name) : '駐車場';
+  return `<div class="popup">
+      <p class="popup-name">${nm}</p>
+      <p class="popup-note">🅿️ 地図上の駐車場です。まだ料金情報がありません。</p>
+      <div class="popup-actions">
+        <button class="act-osmreg" data-lat="${o.lat}" data-lng="${o.lng}" data-name="${nm}">＋ 料金・写真を登録</button>
+      </div>
+    </div>`;
 }
 
 function renderMarkers() {
@@ -540,7 +618,7 @@ function gatherRates() {
 }
 
 // ---- フォーム ----
-function openForm(lot, pos) {
+function openForm(lot, pos, prefillName) {
   const form = $('#lot-form');
   form.reset();
   $('#form-error').classList.add('hidden');
@@ -567,6 +645,7 @@ function openForm(lot, pos) {
     $('#btn-submit').textContent = '登録する';
     form.lat.value = pos.lat;
     form.lng.value = pos.lng;
+    if (prefillName) form.name.value = prefillName; // OSMのP等から名称を引き継ぐ
     resetRateRows(null);
     $('#pos-label').textContent = `${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}`;
     // 位置から住所・名称を自動取得して入力補助（無料のOSM。失敗時は無言でスキップ）
@@ -743,6 +822,16 @@ document.addEventListener('click', (e) => {
       const lot = state.lots.find((l) => l.id === id);
       if (lot) { map.closePopup(); openForm(lot); }
     }
+    return;
+  }
+  // OSMの「P」ピンから料金・写真を登録
+  const osmBtn = e.target.closest('.act-osmreg');
+  if (osmBtn) {
+    const lat = Number(osmBtn.dataset.lat);
+    const lng = Number(osmBtn.dataset.lng);
+    map.closePopup();
+    stopAddMode();
+    openForm(null, { lat, lng }, osmBtn.dataset.name || '');
     return;
   }
   const photo = e.target.closest('.popup-photo');
