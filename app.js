@@ -195,7 +195,8 @@ function popupHtml(lot) {
   const fresh = freshness(lot);
   const dist = distLabel(lot);
   const photo = lot.photo
-    ? `<img class="popup-photo" src="/uploads/${lot.photo}" alt="料金看板" data-photo="${lot.photo}" />`
+    ? `<img class="popup-photo" src="/uploads/${lot.photo}" alt="料金看板" data-photo="${lot.photo}" title="タップで拡大" />
+       <div class="popup-photo-cap">🔍 タップで拡大 — 実際の料金はこの看板でご確認ください</div>`
     : '';
   const noPhoto = !lot.photo ? '<span class="badge badge-photo">📷 写真なし</span>' : '';
   const sample = lot.source === 'osm' ? '<span class="badge badge-sample">🔰 サンプル・未確認</span>' : '';
@@ -203,7 +204,7 @@ function popupHtml(lot) {
     <div class="popup" data-id="${lot.id}">
       ${photo}
       <p class="popup-name">${escapeHtml(lot.name)}</p>
-      <p class="popup-price">概算(${fmtHours(state.hours)}): <strong>${yen(lot.estimate)}</strong></p>
+      <p class="popup-price">概算(${fmtHours(state.hours)}): <strong>${yen(lot.estimate)}</strong> <span class="est-note">※検索用の目安</span></p>
       <p class="popup-price" style="color:var(--muted)">${escapeHtml(ratesText(lot))}</p>
       ${lot.fee_note ? `<p class="popup-note">📝 ${escapeHtml(lot.fee_note)}</p>` : ''}
       ${lot.address ? `<p class="popup-note">📍 ${escapeHtml(lot.address)}</p>` : ''}

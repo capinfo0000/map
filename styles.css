@@ -168,7 +168,9 @@ button { font-family: inherit; cursor: pointer; }
 .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
 
 /* ---- popup ---- */
-.popup-photo { width: 100%; max-height: 130px; object-fit: cover; border-radius: 8px; margin-bottom: 6px; cursor: zoom-in; }
+.popup-photo { width: 100%; max-height: 200px; object-fit: cover; border-radius: 8px; margin-bottom: 2px; cursor: zoom-in; }
+.popup-photo-cap { font-size: 11px; color: var(--brand); font-weight: 600; margin-bottom: 6px; }
+.est-note { font-size: 10.5px; color: var(--gray); font-weight: 600; }
 .popup-name { font-weight: 700; font-size: 15px; margin: 0 0 4px; }
 .popup-price { font-size: 13px; margin: 2px 0; }
 .popup-price strong { color: var(--brand); }
