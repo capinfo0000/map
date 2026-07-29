@@ -86,12 +86,34 @@ function rate_guard(DB $db, string $action, int $perMin, int $perHour): void
 /** 管理者セッションを要求。未ログインなら 403。 */
 function require_admin(): void
 {
-    if (session_status() !== PHP_SESSION_ACTIVE) {
-        session_start();
-    }
+    start_session();
     if (empty($_SESSION['admin'])) {
         json_error('管理者のみ操作できます', 403);
     }
+}
+
+function start_session(): void
+{
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        session_start();
+    }
+}
+
+/** ログイン中アカウントの token を返す（未ログインなら null）。 */
+function current_token(): ?string
+{
+    start_session();
+    return $_SESSION['token'] ?? null;
+}
+
+/** ログイン必須。未ログインなら 401。@return string アカウント token */
+function require_login(): string
+{
+    $t = current_token();
+    if ($t === null) {
+        json_error('ログインが必要です', 401);
+    }
+    return $t;
 }
 
 // 駐車場を JSON 用に整形（概算料金を付与）
@@ -153,6 +175,7 @@ if (preg_match('#^/lots/(\d+)$#', $route, $m) && $method === 'GET') {
 if ($route === '/lots' && $method === 'POST') {
     require_same_origin();
     reject_if_bot($_POST);
+    $token = require_login(); // 投稿はログイン必須。識別はセッションから（偽造不可）
     rate_guard($db, 'post', 5, 30); // 登録: 5件/分, 30件/時（IP単位）
     $parsed = read_lot_body($_POST);
     $photo  = handle_photo_upload($UPLOAD_DIR, $config['max_upload_bytes'] ?? 6291456);
@@ -166,9 +189,11 @@ if ($route === '/lots' && $method === 'POST') {
     if (empty($photo['filename'])) {
         json_error('料金看板の写真を添付してください（写真は必須です）', 400);
     }
+    $account = $db->getAccountByToken($token);
     $data = $parsed['data'];
     $data['photo']  = $photo['filename'];
     $data['source'] = 'user';
+    $data['nickname'] = $account['username'] ?? null; // 投稿者名はアカウント名
     // 可変料金行（rates）: 指定があれば保存し、比較用 hourly/max を導出して上書き
     $rates = process_rates($_POST['rates'] ?? null);
     $data['rates'] = $rates['json'];
@@ -176,17 +201,10 @@ if ($route === '/lots' && $method === 'POST') {
         $data['hourly_rate'] = $rates['derived']['hourly_rate'];
         $data['max_rate']    = $rates['derived']['max_rate'];
     }
-    $token = trim($_POST['client_token'] ?? '');
-    $data['created_by_token'] = $token ?: null;
-    if ($token !== '') {
-        $db->upsertUser($token, $data['nickname']);
-    }
+    $data['created_by_token'] = $token;
     $lot = $db->createLot($data);
-    $me = null;
-    if ($token !== '') {
-        $stats = $db->getUserStats($token);
-        $me = ['nickname' => $stats['nickname']] + reputation($stats);
-    }
+    $stats = $db->getUserStats($token);
+    $me = ['nickname' => $stats['nickname']] + reputation($stats);
     json_out(['lot' => decorate_lot($lot, 1), 'me' => $me], 201);
 }
 
@@ -194,6 +212,7 @@ if ($route === '/lots' && $method === 'POST') {
 if (preg_match('#^/lots/(\d+)$#', $route, $m) && $method === 'POST') {
     require_same_origin();
     reject_if_bot($_POST);
+    require_login(); // 編集もログイン必須
     rate_guard($db, 'edit', 10, 60); // 編集: 10件/分, 60件/時
     $id = (int)$m[1];
     $existing = $db->getLot($id);
@@ -232,19 +251,17 @@ if (preg_match('#^/lots/(\d+)$#', $route, $m) && $method === 'POST') {
 // POST /api/lots/{id}/confirm | report
 if (preg_match('#^/lots/(\d+)/(confirm|report)$#', $route, $m) && $method === 'POST') {
     require_same_origin();
+    $token = require_login(); // 確認/報告もログイン必須。1アカウント1票（識別はセッション）
     rate_guard($db, 'vote', 20, 200); // 確認/報告: 20件/分, 200件/時（IP単位）
     $id = (int)$m[1];
     $kind = $m[2];
     $body = read_json_body();
-    $token = trim($body['client_token'] ?? '');
-    if ($token === '') {
-        json_error('client_token が必要です', 400);
-    }
-    $db->upsertUser($token); // 確認/報告した人も貢献として記録
+    // 報告理由: inappropriate（不適切）ならその旨を記録（少数で自動非表示）
+    $comment = ($kind === 'report' && ($body['reason'] ?? '') === 'inappropriate') ? 'inappropriate' : ($body['comment'] ?? null);
     // 確認時、その駐車場が「要更新（3か月以上）」だったかを記録（鮮度キーパー用）
     $target = $db->getLot($id);
     $wasStale = $target ? !empty(trustLevel($target)['stale']) : false;
-    $result = $db->addReport($id, $token, $kind, $body['comment'] ?? null, $wasStale);
+    $result = $db->addReport($id, $token, $kind, $comment, $wasStale);
     if (!$result['ok'] && ($result['reason'] ?? '') === 'notfound') {
         json_error('not found', 404);
     }
@@ -269,14 +286,69 @@ if ($route === '/parking-nearby' && $method === 'GET') {
     json_out(['parkings' => $list]);
 }
 
-// GET /api/users/me?token=...  （自分の貢献ランク・バッジ）
-if ($route === '/users/me' && $method === 'GET') {
-    $token = trim($_GET['token'] ?? '');
-    if ($token === '') {
-        json_error('token が必要です', 400);
+// ---- 認証（アカウント） ----
+
+// POST /api/auth/register  {username, password}
+if ($route === '/auth/register' && $method === 'POST') {
+    require_same_origin();
+    $body = read_json_body();
+    reject_if_bot($body);
+    rate_guard($db, 'register', 3, 10); // アカウント作成: 3/分, 10/時
+    $username = trim($body['username'] ?? '');
+    $password = (string)($body['password'] ?? '');
+    if (mb_strlen($username) < 2 || mb_strlen($username) > 20) {
+        json_error('ニックネームは2〜20文字で入力してください', 400);
+    }
+    if (strlen($password) < 6) {
+        json_error('パスワードは6文字以上にしてください', 400);
+    }
+    $token = bin2hex(random_bytes(16));
+    $res = $db->createAccount($username, password_hash($password, PASSWORD_DEFAULT), $token);
+    if (!$res['ok'] && ($res['reason'] ?? '') === 'duplicate') {
+        json_error('そのニックネームは既に使われています', 409);
+    }
+    start_session();
+    session_regenerate_id(true);
+    $_SESSION['token'] = $token;
+    $_SESSION['username'] = $username;
+    $stats = $db->getUserStats($token);
+    json_out(['loggedIn' => true, 'username' => $username] + ['reputation' => reputation($stats)]);
+}
+
+// POST /api/auth/login  {username, password}
+if ($route === '/auth/login' && $method === 'POST') {
+    require_same_origin();
+    rate_guard($db, 'login', 5, 30); // 総当たり対策
+    $body = read_json_body();
+    $username = trim($body['username'] ?? '');
+    $password = (string)($body['password'] ?? '');
+    $account = $db->getAccountByUsername($username);
+    if (!$account || !password_verify($password, $account['password_hash'])) {
+        json_error('ニックネームまたはパスワードが違います', 401);
+    }
+    start_session();
+    session_regenerate_id(true);
+    $_SESSION['token'] = $account['token'];
+    $_SESSION['username'] = $account['username'];
+    $stats = $db->getUserStats($account['token']);
+    json_out(['loggedIn' => true, 'username' => $account['username'], 'reputation' => reputation($stats)]);
+}
+
+// POST /api/auth/logout
+if ($route === '/auth/logout' && $method === 'POST') {
+    start_session();
+    unset($_SESSION['token'], $_SESSION['username']);
+    json_out(['ok' => true]);
+}
+
+// GET /api/auth/me  （ログイン状態＋貢献度）
+if ($route === '/auth/me' && $method === 'GET') {
+    $token = current_token();
+    if ($token === null) {
+        json_out(['loggedIn' => false]);
     }
     $stats = $db->getUserStats($token);
-    json_out(['nickname' => $stats['nickname']] + reputation($stats));
+    json_out(['loggedIn' => true, 'username' => $stats['nickname'], 'reputation' => reputation($stats)]);
 }
 
 // ---- 管理（admin） ----

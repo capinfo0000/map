@@ -4,17 +4,6 @@
  * みんなの駐車場マップ — フロントエンド
  * ============================================================ */
 
-// ---- 匿名トークン（1人1票の識別に使用。localStorage 保存） ----
-function getClientToken() {
-  let t = localStorage.getItem('pm_token');
-  if (!t) {
-    t = 'c-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-    localStorage.setItem('pm_token', t);
-  }
-  return t;
-}
-const CLIENT_TOKEN = getClientToken();
-
 // ---- 状態 ----
 const state = {
   sort: 'estimate',
@@ -26,6 +15,8 @@ const state = {
   pending: null, // {lat, lng} 登録中の位置
   editingId: null,
   me: null, // 自分の貢献ランク {points, rank, nextRank, badges, stats, nickname}
+  loggedIn: false, // ログイン状態（識別はサーバーのセッション）
+  username: null,
 };
 
 // ---- 地図初期化 ----
@@ -297,6 +288,7 @@ function popupHtml(lot) {
       <div class="popup-actions">
         <button class="act-confirm" data-act="confirm" data-id="${lot.id}">✅ 情報は正しい</button>
         <button class="act-report" data-act="report" data-id="${lot.id}">⚠️ 違う/古い</button>
+        <button class="act-report" data-act="inappropriate" data-id="${lot.id}">🚩 不適切</button>
         <button class="act-edit" data-act="edit" data-id="${lot.id}">✏️ 編集</button>
       </div>
     </div>`;
@@ -376,17 +368,20 @@ function escapeHtml(s) {
 }
 
 // ---- confirm / report ----
-async function vote(id, kind) {
+// reason: 'inappropriate' のとき不適切通報（少数で自動非表示）
+async function vote(id, kind, reason) {
+  if (!ensureLoggedIn()) return; // ログイン必須
   try {
     const res = await fetch(`/api/lots/${id}/${kind}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_token: CLIENT_TOKEN }),
+      body: JSON.stringify(reason ? { reason } : {}),
     });
     const json = await res.json();
+    if (res.status === 401) { openAuth('login'); return; }
     if (!res.ok) return toast(json.error || 'エラーが発生しました');
     if (kind === 'report' && json.lot && json.lot.hidden) {
-      toast('報告が多いため、この情報は自動的に非表示になりました');
+      toast('報告を受け付けました。この情報は非表示になりました');
       map.closePopup();
     } else {
       toast(kind === 'confirm' ? 'ありがとうございます！確認を記録しました' : '報告を受け付けました');
@@ -401,9 +396,13 @@ async function vote(id, kind) {
 // ---- 貢献ランク（reputation） ----
 async function fetchMe() {
   try {
-    const res = await fetch('/api/users/me?token=' + encodeURIComponent(CLIENT_TOKEN));
+    const res = await fetch('/api/auth/me');
     if (!res.ok) return;
-    applyMe(await res.json(), { silent: true });
+    const d = await res.json();
+    state.loggedIn = !!d.loggedIn;
+    state.username = d.username || null;
+    renderAuthUI();
+    if (d.loggedIn && d.reputation) applyMe({ nickname: d.username, ...d.reputation }, { silent: true });
   } catch (e) { /* noop */ }
 }
 
@@ -418,10 +417,6 @@ function applyMe(me, opts = {}) {
       toast(`ランクアップ！${me.rank.label} になりました🎉`);
     }
   }
-  // 登録フォームのニックネームを保存済みの表示名で補完
-  if (me.nickname && $('#lot-form') && !$('#lot-form').nickname.value) {
-    $('#lot-form').nickname.value = me.nickname;
-  }
 }
 
 function renderRankChip() {
@@ -429,6 +424,41 @@ function renderRankChip() {
   if (!chip || !state.me) return;
   chip.innerHTML = `${state.me.rank.label}<span class="rank-pts">${state.me.points}pt</span>`;
 }
+
+// ---- ログイン状態のUI ----
+function renderAuthUI() {
+  const inn = state.loggedIn;
+  $('#btn-login').classList.toggle('hidden', inn);
+  $('#btn-logout').classList.toggle('hidden', !inn);
+  $('#rank-chip').classList.toggle('hidden', !inn);
+  if (inn) $('#btn-logout').textContent = `ログアウト（${state.username}）`;
+}
+
+// 未ログインならログイン画面を出して false を返す
+function ensureLoggedIn() {
+  if (state.loggedIn) return true;
+  openAuth('login');
+  return false;
+}
+
+let authMode = 'login';
+function openAuth(mode) {
+  authMode = mode || 'login';
+  const isReg = authMode === 'register';
+  $('#auth-title').textContent = isReg ? '新規登録' : 'ログイン';
+  $('#auth-submit').textContent = isReg ? '登録してはじめる' : 'ログイン';
+  $('#pw-hint').textContent = isReg ? '（6文字以上）' : '';
+  $('#auth-switch').innerHTML = isReg
+    ? 'アカウントをお持ちの方は <a href="#" id="to-login">ログイン</a>'
+    : 'はじめての方は <a href="#" id="to-register">新規登録</a>';
+  $('#auth-error').classList.add('hidden');
+  $('#auth-form').reset();
+  $('#auth').classList.remove('hidden');
+  const sw = authMode === 'register' ? '#to-login' : '#to-register';
+  const el = $(sw);
+  if (el) el.addEventListener('click', (e) => { e.preventDefault(); openAuth(isReg ? 'login' : 'register'); });
+}
+function closeAuth() { $('#auth').classList.add('hidden'); }
 
 function openProfile() {
   const me = state.me;
@@ -648,7 +678,6 @@ function openForm(lot, pos, prefillName) {
     form.name.value = lot.name || '';
     form.fee_note.value = lot.fee_note || '';
     form.capacity.value = lot.capacity ?? '';
-    form.nickname.value = lot.nickname || '';
     form.address.value = lot.address || '';
     resetRateRows(lot.rates);
     $('#pos-label').textContent = `${lot.lat.toFixed(5)}, ${lot.lng.toFixed(5)}`;
@@ -784,12 +813,11 @@ $('#lot-form').addEventListener('submit', async (e) => {
   submitBtn.textContent = '送信中…';
 
   const fd = new FormData();
-  ['name', 'lat', 'lng', 'address', 'fee_note', 'capacity', 'nickname'].forEach((k) => {
+  ['name', 'lat', 'lng', 'address', 'fee_note', 'capacity'].forEach((k) => {
     fd.append(k, form[k].value.trim());
   });
   fd.append('website', form.website ? form.website.value : ''); // ハニーポット
   fd.append('rates', JSON.stringify(gatherRates()));
-  fd.append('client_token', CLIENT_TOKEN);
   const file = form.photo.files[0];
   if (file) {
     const resized = await resizeImage(file);
@@ -802,6 +830,7 @@ $('#lot-form').addEventListener('submit', async (e) => {
     const url = editing ? `/api/lots/${editing}` : '/api/lots';
     const res = await fetch(url, { method: 'POST', body: fd });
     const json = await res.json();
+    if (res.status === 401) { closeForm(); openAuth('login'); return; }
     if (!res.ok) {
       errEl.textContent = json.error || '保存に失敗しました';
       errEl.classList.remove('hidden');
@@ -832,7 +861,10 @@ document.addEventListener('click', (e) => {
     const act = actBtn.dataset.act;
     if (act === 'confirm') vote(id, 'confirm');
     else if (act === 'report') vote(id, 'report');
-    else if (act === 'edit') {
+    else if (act === 'inappropriate') {
+      if (confirm('この写真・投稿を「不適切」として通報します。よろしいですか？')) vote(id, 'report', 'inappropriate');
+    } else if (act === 'edit') {
+      if (!ensureLoggedIn()) return;
       const lot = state.lots.find((l) => l.id === id);
       if (lot) { map.closePopup(); openForm(lot); }
     }
@@ -865,7 +897,39 @@ $('#profile-close').addEventListener('click', () => $('#profile').classList.add(
 $('#profile').addEventListener('click', (e) => { if (e.target.id === 'profile') $('#profile').classList.add('hidden'); });
 $('#btn-locate').addEventListener('click', () => locate());
 $('#btn-refresh').addEventListener('click', forceRefresh);
-$('#btn-add').addEventListener('click', startAddMode);
+$('#btn-add').addEventListener('click', () => { if (ensureLoggedIn()) startAddMode(); });
+
+// ---- ログイン/登録 ----
+$('#btn-login').addEventListener('click', () => openAuth('login'));
+$('#auth-close').addEventListener('click', closeAuth);
+$('#auth').addEventListener('click', (e) => { if (e.target.id === 'auth') closeAuth(); });
+$('#btn-logout').addEventListener('click', async () => {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  state.loggedIn = false; state.username = null; state.me = null;
+  renderAuthUI();
+  toast('ログアウトしました');
+});
+$('#auth-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const err = $('#auth-error');
+  err.classList.add('hidden');
+  const payload = { username: form.username.value.trim(), password: form.password.value, website: form.website.value };
+  const path = authMode === 'register' ? '/api/auth/register' : '/api/auth/login';
+  try {
+    const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const json = await res.json();
+    if (!res.ok) { err.textContent = json.error || '失敗しました'; err.classList.remove('hidden'); return; }
+    state.loggedIn = true;
+    state.username = json.username;
+    renderAuthUI();
+    if (json.reputation) applyMe({ nickname: json.username, ...json.reputation }, { silent: true });
+    closeAuth();
+    toast(authMode === 'register' ? 'ようこそ！登録が完了しました' : 'ログインしました');
+  } catch (e2) {
+    err.textContent = '通信に失敗しました'; err.classList.remove('hidden');
+  }
+});
 
 // この地図を更新: 表示範囲のDB＋OSMのPを取り直す
 function forceRefresh() {

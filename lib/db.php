@@ -17,6 +17,8 @@ class DB
     // 自動非表示のしきい値: 報告がこの数以上たまり、かつ確認数を上回ったら非表示にする
     // （確認された良い情報を守りつつ、荒らし投稿を管理者なしで隠す）
     const HIDE_MIN_REPORTS = 5;
+    // 「不適切」通報がこの数に達したら即非表示（ログイン必須で通報が信頼できる前提）
+    const HIDE_INAPPROPRIATE = 2;
 
     public function __construct(array $config)
     {
@@ -104,6 +106,18 @@ class DB
                 token      VARCHAR(80) PRIMARY KEY,
                 nickname   VARCHAR(40),
                 created_at VARCHAR(30) NOT NULL
+            )$engine
+        ");
+
+        $this->pdo->exec("
+            CREATE TABLE IF NOT EXISTS accounts (
+                id            $auto,
+                username      VARCHAR(40) NOT NULL,
+                password_hash VARCHAR(255) NOT NULL,
+                token         VARCHAR(80) NOT NULL,
+                created_at    VARCHAR(30) NOT NULL,
+                UNIQUE (username),
+                UNIQUE (token)
             )$engine
         ");
 
@@ -278,6 +292,17 @@ class DB
                      WHERE id = ? AND hidden = 0
                        AND report_count >= ? AND report_count > confirm_count"
                 )->execute([$now, $lotId, self::HIDE_MIN_REPORTS]);
+                // 不適切通報は少数でも即非表示（ログイン必須で通報が信頼できるため）
+                if ($comment === 'inappropriate') {
+                    $ic = $this->pdo->prepare(
+                        "SELECT COUNT(*) AS c FROM reports WHERE lot_id = ? AND kind = 'report' AND comment = 'inappropriate'"
+                    );
+                    $ic->execute([$lotId]);
+                    if ((int)$ic->fetch()['c'] >= self::HIDE_INAPPROPRIATE) {
+                        $this->pdo->prepare('UPDATE lots SET hidden = 1, hidden_at = ? WHERE id = ? AND hidden = 0')
+                            ->execute([$now, $lotId]);
+                    }
+                }
             }
             $this->pdo->commit();
         } catch (PDOException $e) {
@@ -327,6 +352,39 @@ class DB
         $st = $this->pdo->prepare('DELETE FROM rate_hits WHERE created_at < ?');
         $st->execute([$cutoff]);
         return $st->rowCount();
+    }
+
+    // ---- アカウント（ログイン） ----
+
+    /** アカウント作成。@return array{ok:bool, reason?:string, account?:array} */
+    public function createAccount(string $username, string $passwordHash, string $token): array
+    {
+        $now = gmdate('Y-m-d\TH:i:s\Z');
+        try {
+            $this->pdo->prepare(
+                'INSERT INTO accounts (username, password_hash, token, created_at) VALUES (?, ?, ?, ?)'
+            )->execute([$username, $passwordHash, $token, $now]);
+        } catch (PDOException $e) {
+            if ($this->isUniqueViolation($e)) {
+                return ['ok' => false, 'reason' => 'duplicate'];
+            }
+            throw $e;
+        }
+        return ['ok' => true, 'account' => $this->getAccountByToken($token)];
+    }
+
+    public function getAccountByUsername(string $username): ?array
+    {
+        $st = $this->pdo->prepare('SELECT * FROM accounts WHERE username = ?');
+        $st->execute([$username]);
+        return $st->fetch() ?: null;
+    }
+
+    public function getAccountByToken(string $token): ?array
+    {
+        $st = $this->pdo->prepare('SELECT * FROM accounts WHERE token = ?');
+        $st->execute([$token]);
+        return $st->fetch() ?: null;
     }
 
     // ---- 管理（admin） ----
@@ -436,12 +494,19 @@ class DB
             return (int)($st->fetch()['c'] ?? 0);
         };
 
-        $u = $this->pdo->prepare('SELECT nickname FROM users WHERE token = ?');
-        $u->execute([$token]);
-        $urow = $u->fetch();
+        // ニックネームはアカウント(username)から。無ければ旧users.nicknameにフォールバック
+        $a = $this->pdo->prepare('SELECT username FROM accounts WHERE token = ?');
+        $a->execute([$token]);
+        $arow = $a->fetch();
+        $nickname = $arow['username'] ?? null;
+        if ($nickname === null) {
+            $u = $this->pdo->prepare('SELECT nickname FROM users WHERE token = ?');
+            $u->execute([$token]);
+            $nickname = ($u->fetch()['nickname'] ?? null);
+        }
 
         return [
-            'nickname'         => $urow['nickname'] ?? null,
+            'nickname'         => $nickname,
             'posts'            => $one('SELECT COUNT(*) AS c FROM lots WHERE created_by_token = ?', [$token]),
             'photoPosts'       => $one("SELECT COUNT(*) AS c FROM lots WHERE created_by_token = ? AND photo IS NOT NULL AND photo <> ''", [$token]),
             'votes'            => $one('SELECT COUNT(*) AS c FROM reports WHERE client_token = ?', [$token]),

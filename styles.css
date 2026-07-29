@@ -223,6 +223,8 @@ button { font-family: inherit; cursor: pointer; }
 
 /* ハニーポット（画面外に隠す・スクリーンリーダーも読まない） */
 .hp-field { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.auth-card { max-width: 420px; }
+.auth-card .admin-note a, .admin-lead { color: var(--muted); }
 
 .hidden { display: none !important; }
 

@@ -7,14 +7,16 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🅿️</text></svg>" />
   <meta name="description" content="みんなで作る駐車場マップ。周辺の駐車場と料金を地図で探して、最安値を見つけよう。" />
   <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
-  <link rel="stylesheet" href="styles.css?v=20260729b" />
+  <link rel="stylesheet" href="styles.css?v=20260729c" />
 </head>
 <body>
   <div id="app">
     <header class="topbar">
       <h1 class="brand">🅿️ みんなの駐車場マップ</h1>
       <div class="topbar-actions">
-        <button id="rank-chip" class="rank-chip" title="あなたの貢献ランク">🥉 ブロンズ<span class="rank-pts">0pt</span></button>
+        <button id="rank-chip" class="rank-chip hidden" title="あなたの貢献ランク">🥉 ブロンズ<span class="rank-pts">0pt</span></button>
+        <button id="btn-login" class="icon-btn">ログイン / 登録</button>
+        <button id="btn-logout" class="icon-btn hidden" title="ログアウト">ログアウト</button>
         <button id="btn-refresh" class="icon-btn" title="この地図を更新">🔄 更新</button>
         <button id="btn-locate" class="icon-btn" title="現在地へ">📍 現在地</button>
         <button id="btn-add" class="primary-btn">＋ 駐車場を登録</button>
@@ -66,16 +68,10 @@
           <input name="fee_note" type="text" maxlength="500" placeholder="例: 夜間20時〜8時は最大500円 / 最初30分無料" />
         </label>
 
-        <div class="grid2">
-          <label class="field">
-            <span>台数（任意）</span>
-            <input name="capacity" type="number" min="0" inputmode="numeric" placeholder="例: 20" />
-          </label>
-          <label class="field">
-            <span>ニックネーム（任意）</span>
-            <input name="nickname" type="text" maxlength="40" placeholder="例: とおりすがり" />
-          </label>
-        </div>
+        <label class="field">
+          <span>台数（任意）</span>
+          <input name="capacity" type="number" min="0" inputmode="numeric" placeholder="例: 20" />
+        </label>
 
         <label class="field">
           <span>住所・目印（任意）</span>
@@ -96,6 +92,34 @@
           <button type="submit" id="btn-submit" class="primary-btn">登録する</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- ログイン / 新規登録 -->
+  <div id="auth" class="modal hidden">
+    <div class="modal-card auth-card">
+      <div class="modal-head">
+        <h2 id="auth-title">ログイン</h2>
+        <button id="auth-close" class="icon-btn">✕</button>
+      </div>
+      <p class="admin-lead" id="auth-lead">駐車場の登録・確認・報告にはログインが必要です。</p>
+      <form id="auth-form">
+        <label class="field">
+          <span>ニックネーム</span>
+          <input name="username" type="text" maxlength="20" autocomplete="username" placeholder="例: よね" required />
+        </label>
+        <label class="field">
+          <span>パスワード <em class="hint-inline" id="pw-hint">（6文字以上）</em></span>
+          <input name="password" type="password" autocomplete="current-password" placeholder="パスワード" required />
+        </label>
+        <!-- ハニーポット -->
+        <div class="hp-field" aria-hidden="true"><label>サイト<input name="website" tabindex="-1" autocomplete="off" /></label></div>
+        <p id="auth-error" class="form-error hidden"></p>
+        <div class="modal-actions">
+          <button type="submit" id="auth-submit" class="primary-btn">ログイン</button>
+        </div>
+      </form>
+      <p class="admin-note" id="auth-switch"></p>
     </div>
   </div>
 
@@ -128,6 +152,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/vendor/leaflet/leaflet.js"></script>
-  <script src="app.js?v=20260729b"></script>
+  <script src="app.js?v=20260729c"></script>
 </body>
 </html>
