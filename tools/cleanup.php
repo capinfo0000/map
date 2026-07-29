@@ -88,7 +88,11 @@ if (is_dir($CACHE_DIR)) {
     }
 }
 
+// 4) 古いレート制限記録の削除（1日より前）
+$prunedRate = $db->pruneRateHits(86400);
+
 echo "掃除完了:\n";
 echo "  非表示から{$PURGE_DAYS}日超で削除した駐車場: {$purged['lots']} 件（画像 {$purgedFiles} 件）\n";
 echo "  孤立画像の削除: {$deletedOrphans} 件\n";
 echo "  古いキャッシュの削除: {$deletedCache} 件\n";
+echo "  古いレート記録の削除: {$prunedRate} 件\n";

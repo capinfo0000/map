@@ -107,6 +107,23 @@ class DB
             )$engine
         ");
 
+        $this->pdo->exec("
+            CREATE TABLE IF NOT EXISTS rate_hits (
+                id         $auto,
+                bucket     VARCHAR(80) NOT NULL,
+                created_at VARCHAR(30) NOT NULL
+            )$engine
+        ");
+        try {
+            $sql = 'CREATE INDEX idx_rate_bucket ON rate_hits (bucket, created_at)';
+            if ($this->driver === 'sqlite') {
+                $sql = str_replace('CREATE INDEX', 'CREATE INDEX IF NOT EXISTS', $sql);
+            }
+            $this->pdo->exec($sql);
+        } catch (PDOException $e) {
+            // 既存なら無視
+        }
+
         // 既存 DB 向け: 列が無ければ追加（重複エラーは無視）
         foreach ([
             'ALTER TABLE lots ADD COLUMN created_by_token VARCHAR(80)',
@@ -279,6 +296,73 @@ class DB
     public function countLots(): int
     {
         return (int)$this->pdo->query('SELECT COUNT(*) AS c FROM lots')->fetch()['c'];
+    }
+
+    // ---- レート制限 ----
+
+    /**
+     * $bucket について直近 $windowSec 秒間の回数が $limit 未満なら記録して true。
+     * 上限に達していれば false（＝拒否）。
+     */
+    public function rateAllow(string $bucket, int $limit, int $windowSec): bool
+    {
+        $now = time();
+        $cutoff = gmdate('Y-m-d\TH:i:s\Z', $now - $windowSec);
+        $this->pdo->prepare('DELETE FROM rate_hits WHERE bucket = ? AND created_at < ?')
+            ->execute([$bucket, $cutoff]);
+        $c = $this->pdo->prepare('SELECT COUNT(*) AS c FROM rate_hits WHERE bucket = ?');
+        $c->execute([$bucket]);
+        if ((int)$c->fetch()['c'] >= $limit) {
+            return false;
+        }
+        $this->pdo->prepare('INSERT INTO rate_hits (bucket, created_at) VALUES (?, ?)')
+            ->execute([$bucket, gmdate('Y-m-d\TH:i:s\Z', $now)]);
+        return true;
+    }
+
+    /** 古いレート記録を削除（cleanup 用）。@return int 削除件数 */
+    public function pruneRateHits(int $olderThanSec = 86400): int
+    {
+        $cutoff = gmdate('Y-m-d\TH:i:s\Z', time() - $olderThanSec);
+        $st = $this->pdo->prepare('DELETE FROM rate_hits WHERE created_at < ?');
+        $st->execute([$cutoff]);
+        return $st->rowCount();
+    }
+
+    // ---- 管理（admin） ----
+
+    /** 全駐車場（非表示含む）を新しい順に返す。 */
+    public function listAllLots(int $limit = 500): array
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM lots ORDER BY updated_at DESC LIMIT ?');
+        $stmt->bindValue(1, $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll();
+    }
+
+    /** 駐車場を完全削除（報告も削除）。@return ?string 削除した写真ファイル名 */
+    public function deleteLot(int $id): ?string
+    {
+        $lot = $this->getLot($id);
+        if (!$lot) {
+            return null;
+        }
+        $this->pdo->beginTransaction();
+        $this->pdo->prepare('DELETE FROM reports WHERE lot_id = ?')->execute([$id]);
+        $this->pdo->prepare('DELETE FROM lots WHERE id = ?')->execute([$id]);
+        $this->pdo->commit();
+        return $lot['photo'] ?: null;
+    }
+
+    /** 非表示/復活を切り替える。 */
+    public function setHidden(int $id, bool $hidden): ?array
+    {
+        if (!$this->getLot($id)) {
+            return null;
+        }
+        $this->pdo->prepare('UPDATE lots SET hidden = ?, hidden_at = ? WHERE id = ?')
+            ->execute([$hidden ? 1 : 0, $hidden ? gmdate('Y-m-d\TH:i:s\Z') : null, $id]);
+        return $this->getLot($id);
     }
 
     // ---- メンテナンス（画像・不要データの掃除） ----

@@ -787,6 +787,7 @@ $('#lot-form').addEventListener('submit', async (e) => {
   ['name', 'lat', 'lng', 'address', 'fee_note', 'capacity', 'nickname'].forEach((k) => {
     fd.append(k, form[k].value.trim());
   });
+  fd.append('website', form.website ? form.website.value : ''); // ハニーポット
   fd.append('rates', JSON.stringify(gatherRates()));
   fd.append('client_token', CLIENT_TOKEN);
   const file = form.photo.files[0];

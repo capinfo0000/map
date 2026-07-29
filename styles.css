@@ -221,6 +221,9 @@ button { font-family: inherit; cursor: pointer; }
 }
 .leaflet-control-attribution a { color: #888; }
 
+/* ハニーポット（画面外に隠す・スクリーンリーダーも読まない） */
+.hp-field { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+
 .hidden { display: none !important; }
 
 /* ---- responsive ---- */
