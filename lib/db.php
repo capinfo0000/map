@@ -113,11 +113,17 @@ class DB
             CREATE TABLE IF NOT EXISTS accounts (
                 id            $auto,
                 username      VARCHAR(40) NOT NULL,
+                email         VARCHAR(190),
                 password_hash VARCHAR(255) NOT NULL,
                 token         VARCHAR(80) NOT NULL,
+                verified      INT NOT NULL DEFAULT 0,
+                verify_token  VARCHAR(80),
+                reset_token   VARCHAR(80),
+                reset_expires VARCHAR(30),
                 created_at    VARCHAR(30) NOT NULL,
                 UNIQUE (username),
-                UNIQUE (token)
+                UNIQUE (token),
+                UNIQUE (email)
             )$engine
         ");
 
@@ -145,12 +151,23 @@ class DB
             'ALTER TABLE lots ADD COLUMN hidden INT NOT NULL DEFAULT 0',
             'ALTER TABLE lots ADD COLUMN hidden_at VARCHAR(30)',
             'ALTER TABLE lots ADD COLUMN rates TEXT',
+            'ALTER TABLE accounts ADD COLUMN email VARCHAR(190)',
+            'ALTER TABLE accounts ADD COLUMN verified INT NOT NULL DEFAULT 0',
+            'ALTER TABLE accounts ADD COLUMN verify_token VARCHAR(80)',
+            'ALTER TABLE accounts ADD COLUMN reset_token VARCHAR(80)',
+            'ALTER TABLE accounts ADD COLUMN reset_expires VARCHAR(30)',
         ] as $sql) {
             try {
                 $this->pdo->exec($sql);
             } catch (PDOException $e) {
                 // 既に存在する場合は無視
             }
+        }
+        // メール未設定の既存アカウントは認証済み扱いにして温存
+        try {
+            $this->pdo->exec("UPDATE accounts SET verified = 1 WHERE (email IS NULL OR email = '') AND verified = 0");
+        } catch (PDOException $e) {
+            // accounts が無い等は無視
         }
 
         // インデックス（存在しても致命的でないよう try）
@@ -356,14 +373,18 @@ class DB
 
     // ---- アカウント（ログイン） ----
 
-    /** アカウント作成。@return array{ok:bool, reason?:string, account?:array} */
-    public function createAccount(string $username, string $passwordHash, string $token): array
+    /**
+     * アカウント作成（メール認証前）。verified=0, verify_token 付き。
+     * @return array{ok:bool, reason?:string, account?:array}
+     */
+    public function createAccount(string $username, string $email, string $passwordHash, string $token, string $verifyToken): array
     {
         $now = gmdate('Y-m-d\TH:i:s\Z');
         try {
             $this->pdo->prepare(
-                'INSERT INTO accounts (username, password_hash, token, created_at) VALUES (?, ?, ?, ?)'
-            )->execute([$username, $passwordHash, $token, $now]);
+                'INSERT INTO accounts (username, email, password_hash, token, verified, verify_token, created_at)
+                 VALUES (?, ?, ?, ?, 0, ?, ?)'
+            )->execute([$username, $email, $passwordHash, $token, $verifyToken, $now]);
         } catch (PDOException $e) {
             if ($this->isUniqueViolation($e)) {
                 return ['ok' => false, 'reason' => 'duplicate'];
@@ -380,11 +401,72 @@ class DB
         return $st->fetch() ?: null;
     }
 
+    public function getAccountByEmail(string $email): ?array
+    {
+        $st = $this->pdo->prepare('SELECT * FROM accounts WHERE email = ?');
+        $st->execute([$email]);
+        return $st->fetch() ?: null;
+    }
+
     public function getAccountByToken(string $token): ?array
     {
         $st = $this->pdo->prepare('SELECT * FROM accounts WHERE token = ?');
         $st->execute([$token]);
         return $st->fetch() ?: null;
+    }
+
+    /** verify_token でメール認証を完了。@return bool 成功可否 */
+    public function verifyAccount(string $verifyToken): bool
+    {
+        if ($verifyToken === '') {
+            return false;
+        }
+        $st = $this->pdo->prepare('SELECT id FROM accounts WHERE verify_token = ?');
+        $st->execute([$verifyToken]);
+        if (!$st->fetch()) {
+            return false;
+        }
+        $this->pdo->prepare('UPDATE accounts SET verified = 1, verify_token = NULL WHERE verify_token = ?')
+            ->execute([$verifyToken]);
+        return true;
+    }
+
+    /** 未認証アカウントの verify_token を再発行して返す（再送用）。 */
+    public function refreshVerifyToken(int $id, string $verifyToken): void
+    {
+        $this->pdo->prepare('UPDATE accounts SET verify_token = ? WHERE id = ? AND verified = 0')
+            ->execute([$verifyToken, $id]);
+    }
+
+    public function setResetToken(int $id, string $resetToken, string $expiresIso): void
+    {
+        $this->pdo->prepare('UPDATE accounts SET reset_token = ?, reset_expires = ? WHERE id = ?')
+            ->execute([$resetToken, $expiresIso, $id]);
+    }
+
+    /** 有効なリセットトークンのアカウントを返す（期限切れは無効）。 */
+    public function getAccountByResetToken(string $resetToken): ?array
+    {
+        if ($resetToken === '') {
+            return null;
+        }
+        $st = $this->pdo->prepare('SELECT * FROM accounts WHERE reset_token = ?');
+        $st->execute([$resetToken]);
+        $a = $st->fetch();
+        if (!$a) {
+            return null;
+        }
+        if (empty($a['reset_expires']) || $a['reset_expires'] < gmdate('Y-m-d\TH:i:s\Z')) {
+            return null; // 期限切れ
+        }
+        return $a;
+    }
+
+    /** パスワードを更新し、リセットトークンを消す。 */
+    public function updatePassword(int $id, string $passwordHash): void
+    {
+        $this->pdo->prepare('UPDATE accounts SET password_hash = ?, reset_token = NULL, reset_expires = NULL WHERE id = ?')
+            ->execute([$passwordHash, $id]);
     }
 
     // ---- 管理（admin） ----

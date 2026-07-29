@@ -7,7 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🅿️</text></svg>" />
   <meta name="description" content="みんなで作る駐車場マップ。周辺の駐車場と料金を地図で探して、最安値を見つけよう。" />
   <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
-  <link rel="stylesheet" href="styles.css?v=20260729d" />
+  <link rel="stylesheet" href="styles.css?v=20260729e" />
 </head>
 <body>
   <div id="app">
@@ -107,23 +107,29 @@
       </div>
       <p class="admin-lead" id="auth-lead">駐車場の登録・確認・報告にはログインが必要です。</p>
       <form id="auth-form">
-        <label class="field">
+        <label class="field" id="fld-username">
           <span>ニックネーム</span>
-          <input name="username" type="text" maxlength="20" autocomplete="username" placeholder="例: よね" required />
+          <input name="username" type="text" maxlength="20" autocomplete="username" placeholder="例: よね" />
         </label>
-        <label class="field">
+        <label class="field" id="fld-email">
+          <span>メールアドレス</span>
+          <input name="email" type="email" autocomplete="email" placeholder="例: you@example.com" />
+        </label>
+        <label class="field" id="fld-password">
           <span>パスワード <em class="hint-inline" id="pw-hint">（6文字以上）</em></span>
-          <input name="password" type="password" autocomplete="current-password" placeholder="パスワード" required />
+          <input name="password" type="password" autocomplete="current-password" placeholder="パスワード" />
         </label>
         <!-- ハニーポット -->
         <div class="hp-field" aria-hidden="true"><label>サイト<input name="website" tabindex="-1" autocomplete="off" /></label></div>
         <p id="auth-error" class="form-error hidden"></p>
+        <p id="auth-msg" class="auth-msg hidden"></p>
         <div class="modal-actions">
           <button type="submit" id="auth-submit" class="primary-btn">ログイン</button>
         </div>
       </form>
       <p class="auth-terms">登録・ログインで<a href="terms.html" target="_blank" rel="noopener">利用規約・プライバシー</a>に同意したものとみなします。</p>
       <p class="admin-note" id="auth-switch"></p>
+      <p class="admin-note" id="auth-forgot"></p>
     </div>
   </div>
 
@@ -156,6 +162,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/vendor/leaflet/leaflet.js"></script>
-  <script src="app.js?v=20260729d"></script>
+  <script src="app.js?v=20260729e"></script>
 </body>
 </html>

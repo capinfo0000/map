@@ -441,24 +441,40 @@ function ensureLoggedIn() {
   return false;
 }
 
-let authMode = 'login';
+let authMode = 'login'; // 'login' | 'register' | 'forgot'
 function openAuth(mode) {
   authMode = mode || 'login';
-  const isReg = authMode === 'register';
-  $('#auth-title').textContent = isReg ? '新規登録' : 'ログイン';
-  $('#auth-submit').textContent = isReg ? '登録してはじめる' : 'ログイン';
-  $('#pw-hint').textContent = isReg ? '（6文字以上）' : '';
-  $('#auth-switch').innerHTML = isReg
-    ? 'アカウントをお持ちの方は <a href="#" id="to-login">ログイン</a>'
-    : 'はじめての方は <a href="#" id="to-register">新規登録</a>';
+  const cfg = {
+    login:    { title: 'ログイン',   submit: 'ログイン',            u: false, e: true,  p: true },
+    register: { title: '新規登録',   submit: '登録（確認メール送信）', u: true,  e: true,  p: true },
+    forgot:   { title: 'パスワード再設定', submit: '再設定メールを送る',  u: false, e: true,  p: false },
+  }[authMode];
+  $('#auth-title').textContent = cfg.title;
+  $('#auth-submit').textContent = cfg.submit;
+  $('#fld-username').classList.toggle('hidden', !cfg.u);
+  $('#fld-password').classList.toggle('hidden', !cfg.p);
+  $('#pw-hint').textContent = authMode === 'register' ? '（6文字以上）' : '';
+  $('#auth-lead').textContent = authMode === 'forgot'
+    ? '登録済みのメールアドレスに、パスワード再設定用のリンクを送ります。'
+    : '駐車場の登録・確認・報告にはログイン（無料の会員登録）が必要です。';
+  $('#auth-switch').innerHTML = authMode === 'register'
+    ? 'アカウントをお持ちの方は <a href="#" data-auth="login">ログイン</a>'
+    : 'はじめての方は <a href="#" data-auth="register">新規登録</a>';
+  $('#auth-forgot').innerHTML = authMode === 'login'
+    ? '<a href="#" data-auth="forgot">パスワードを忘れた方</a>'
+    : (authMode === 'forgot' ? '<a href="#" data-auth="login">← ログインに戻る</a>' : '');
   $('#auth-error').classList.add('hidden');
+  $('#auth-msg').classList.add('hidden');
   $('#auth-form').reset();
   $('#auth').classList.remove('hidden');
-  const sw = authMode === 'register' ? '#to-login' : '#to-register';
-  const el = $(sw);
-  if (el) el.addEventListener('click', (e) => { e.preventDefault(); openAuth(isReg ? 'login' : 'register'); });
 }
 function closeAuth() { $('#auth').classList.add('hidden'); }
+
+// モード切替リンク（委任）
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('[data-auth]');
+  if (a) { e.preventDefault(); openAuth(a.dataset.auth); }
+});
 
 function openProfile() {
   const me = state.me;
@@ -913,23 +929,59 @@ $('#auth-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.target;
   const err = $('#auth-error');
-  err.classList.add('hidden');
-  const payload = { username: form.username.value.trim(), password: form.password.value, website: form.website.value };
-  const path = authMode === 'register' ? '/api/auth/register' : '/api/auth/login';
+  const msg = $('#auth-msg');
+  err.classList.add('hidden'); msg.classList.add('hidden');
+  const email = form.email.value.trim();
+  const password = form.password.value;
+  const showErr = (t) => { err.textContent = t; err.classList.remove('hidden'); };
+  const showMsg = (t) => { msg.innerHTML = t; msg.classList.remove('hidden'); };
+
   try {
-    const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    const json = await res.json();
-    if (!res.ok) { err.textContent = json.error || '失敗しました'; err.classList.remove('hidden'); return; }
+    if (authMode === 'forgot') {
+      await postJson('/api/auth/forgot', { email });
+      showMsg('登録があれば、再設定用のメールを送信しました。メールをご確認ください。');
+      return;
+    }
+    if (authMode === 'register') {
+      const { res, json } = await postJson('/api/auth/register', {
+        username: form.username.value.trim(), email, password, website: form.website.value,
+      });
+      if (!res.ok) return showErr(json.error || '登録に失敗しました');
+      // 確認メール送信済み → ログインへ誘導
+      openAuth('login');
+      showMsg('確認メールを送信しました📩 メール内のリンクで認証してから、ログインしてください。');
+      return;
+    }
+    // login
+    const { res, json } = await postJson('/api/auth/login', { email, password });
+    if (res.status === 403) { // 未認証
+      showErr(json.error || 'メール認証が完了していません');
+      $('#auth-forgot').innerHTML = '<a href="#" id="resend-link">確認メールを再送する</a>';
+      $('#resend-link').addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        await postJson('/api/auth/resend', { email });
+        showMsg('確認メールを再送しました📩');
+      });
+      return;
+    }
+    if (!res.ok) return showErr(json.error || 'ログインに失敗しました');
     state.loggedIn = true;
     state.username = json.username;
     renderAuthUI();
     if (json.reputation) applyMe({ nickname: json.username, ...json.reputation }, { silent: true });
     closeAuth();
-    toast(authMode === 'register' ? 'ようこそ！登録が完了しました' : 'ログインしました');
+    toast('ログインしました');
   } catch (e2) {
-    err.textContent = '通信に失敗しました'; err.classList.remove('hidden');
+    showErr('通信に失敗しました');
   }
 });
+
+async function postJson(path, body) {
+  const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  let json = {};
+  try { json = await res.json(); } catch (e) {}
+  return { res, json };
+}
 
 // この地図を更新: 表示範囲のDB＋OSMのPを取り直す
 function forceRefresh() {

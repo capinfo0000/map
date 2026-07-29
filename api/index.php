@@ -13,6 +13,7 @@ require __DIR__ . '/../lib/helpers.php';
 require __DIR__ . '/../lib/trust.php';
 require __DIR__ . '/../lib/reputation.php';
 require __DIR__ . '/../lib/overpass.php';
+require __DIR__ . '/../lib/mail.php';
 require __DIR__ . '/../lib/db.php';
 
 // 予期しない例外は一般的な 500 で返す（内部情報を漏らさない）
@@ -313,43 +314,85 @@ if ($route === '/parking-nearby' && $method === 'GET') {
 
 // ---- 認証（アカウント） ----
 
-// POST /api/auth/register  {username, password}
+// POST /api/auth/register  {username, email, password}
 if ($route === '/auth/register' && $method === 'POST') {
     require_same_origin();
     $body = read_json_body();
     reject_if_bot($body);
     rate_guard($db, 'register', 3, 10); // アカウント作成: 3/分, 10/時
     $username = trim($body['username'] ?? '');
+    $email = trim($body['email'] ?? '');
     $password = (string)($body['password'] ?? '');
     if (mb_strlen($username) < 2 || mb_strlen($username) > 20) {
         json_error('ニックネームは2〜20文字で入力してください', 400);
     }
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        json_error('メールアドレスの形式が正しくありません', 400);
+    }
     if (strlen($password) < 6) {
         json_error('パスワードは6文字以上にしてください', 400);
     }
-    $token = bin2hex(random_bytes(16));
-    $res = $db->createAccount($username, password_hash($password, PASSWORD_DEFAULT), $token);
-    if (!$res['ok'] && ($res['reason'] ?? '') === 'duplicate') {
-        json_error('そのニックネームは既に使われています', 409);
+    if (($config['mail_from'] ?? '') === '') {
+        json_error('サーバーのメール設定が未完了のため登録できません（管理者にご連絡ください）', 500);
     }
-    start_session();
-    session_regenerate_id(true);
-    $_SESSION['token'] = $token;
-    $_SESSION['username'] = $username;
-    $stats = $db->getUserStats($token);
-    json_out(['loggedIn' => true, 'username' => $username] + ['reputation' => reputation($stats)]);
+    $token = bin2hex(random_bytes(16));
+    $verifyToken = bin2hex(random_bytes(16));
+    $res = $db->createAccount($username, $email, password_hash($password, PASSWORD_DEFAULT), $token, $verifyToken);
+    if (!$res['ok'] && ($res['reason'] ?? '') === 'duplicate') {
+        json_error('そのニックネームまたはメールアドレスは既に使われています', 409);
+    }
+    $link = site_url($config) . '/api/auth/verify?token=' . $verifyToken;
+    send_mail($config, $email, 'メールアドレスの確認 | みんなの駐車場マップ',
+        "みんなの駐車場マップにご登録ありがとうございます。\n\n"
+        . "以下のリンクを開いてメールアドレスの確認を完了してください（24時間有効）。\n\n"
+        . $link . "\n\n"
+        . "心当たりがない場合はこのメールを破棄してください。\n");
+    json_out(['registered' => true, 'needVerify' => true]);
 }
 
-// POST /api/auth/login  {username, password}
+// GET /api/auth/verify?token=...  （メール内リンク。HTMLで結果表示）
+if ($route === '/auth/verify' && $method === 'GET') {
+    $ok = $db->verifyAccount(trim($_GET['token'] ?? ''));
+    header('Content-Type: text/html; charset=utf-8');
+    $msg = $ok ? '✅ メール認証が完了しました。ログインしてご利用ください。'
+               : '⚠️ リンクが無効か、既に認証済みです。';
+    echo '<!doctype html><html lang="ja"><head><meta charset="utf-8">'
+        . '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        . '<title>メール認証</title><style>body{font-family:sans-serif;max-width:560px;margin:60px auto;padding:0 20px;line-height:1.8;color:#1c2430}a{color:#1573ff}</style></head>'
+        . '<body><h2>🅿️ みんなの駐車場マップ</h2><p>' . $msg . '</p><p><a href="/">地図をひらく →</a></p></body></html>';
+    exit;
+}
+
+// POST /api/auth/resend  {email}  （確認メール再送）
+if ($route === '/auth/resend' && $method === 'POST') {
+    require_same_origin();
+    rate_guard($db, 'resend', 3, 10);
+    $body = read_json_body();
+    $email = trim($body['email'] ?? '');
+    $account = $email !== '' ? $db->getAccountByEmail($email) : null;
+    if ($account && (int)$account['verified'] === 0) {
+        $verifyToken = bin2hex(random_bytes(16));
+        $db->refreshVerifyToken((int)$account['id'], $verifyToken);
+        $link = site_url($config) . '/api/auth/verify?token=' . $verifyToken;
+        send_mail($config, $email, 'メールアドレスの確認（再送） | みんなの駐車場マップ',
+            "以下のリンクでメール認証を完了してください（24時間有効）。\n\n" . $link . "\n");
+    }
+    json_out(['ok' => true]); // 存在有無を明かさない
+}
+
+// POST /api/auth/login  {email, password}
 if ($route === '/auth/login' && $method === 'POST') {
     require_same_origin();
     rate_guard($db, 'login', 5, 30); // 総当たり対策
     $body = read_json_body();
-    $username = trim($body['username'] ?? '');
+    $email = trim($body['email'] ?? '');
     $password = (string)($body['password'] ?? '');
-    $account = $db->getAccountByUsername($username);
+    $account = $email !== '' ? $db->getAccountByEmail($email) : null;
     if (!$account || !password_verify($password, $account['password_hash'])) {
-        json_error('ニックネームまたはパスワードが違います', 401);
+        json_error('メールアドレスまたはパスワードが違います', 401);
+    }
+    if ((int)$account['verified'] === 0) {
+        json_error('メール認証が完了していません。確認メールのリンクから認証してください', 403);
     }
     start_session();
     session_regenerate_id(true);
@@ -357,6 +400,45 @@ if ($route === '/auth/login' && $method === 'POST') {
     $_SESSION['username'] = $account['username'];
     $stats = $db->getUserStats($account['token']);
     json_out(['loggedIn' => true, 'username' => $account['username'], 'reputation' => reputation($stats)]);
+}
+
+// POST /api/auth/forgot  {email}  （パスワード再発行メール）
+if ($route === '/auth/forgot' && $method === 'POST') {
+    require_same_origin();
+    rate_guard($db, 'forgot', 3, 10);
+    $body = read_json_body();
+    $email = trim($body['email'] ?? '');
+    $account = $email !== '' ? $db->getAccountByEmail($email) : null;
+    if ($account) {
+        $resetToken = bin2hex(random_bytes(16));
+        $expires = gmdate('Y-m-d\TH:i:s\Z', time() + 3600); // 1時間有効
+        $db->setResetToken((int)$account['id'], $resetToken, $expires);
+        $link = site_url($config) . '/reset.html?token=' . $resetToken;
+        send_mail($config, $email, 'パスワード再設定 | みんなの駐車場マップ',
+            "パスワード再設定のリクエストを受け付けました。\n\n"
+            . "以下のリンクから新しいパスワードを設定してください（1時間有効）。\n\n"
+            . $link . "\n\n"
+            . "心当たりがない場合はこのメールを破棄してください。\n");
+    }
+    json_out(['ok' => true]); // 存在有無を明かさない
+}
+
+// POST /api/auth/reset  {token, password}
+if ($route === '/auth/reset' && $method === 'POST') {
+    require_same_origin();
+    rate_guard($db, 'reset', 5, 30);
+    $body = read_json_body();
+    $rtoken = trim($body['token'] ?? '');
+    $password = (string)($body['password'] ?? '');
+    if (strlen($password) < 6) {
+        json_error('パスワードは6文字以上にしてください', 400);
+    }
+    $account = $db->getAccountByResetToken($rtoken);
+    if (!$account) {
+        json_error('リンクが無効か、有効期限が切れています。もう一度お試しください', 400);
+    }
+    $db->updatePassword((int)$account['id'], password_hash($password, PASSWORD_DEFAULT));
+    json_out(['ok' => true]);
 }
 
 // POST /api/auth/logout

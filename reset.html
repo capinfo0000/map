@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>パスワード再設定 | みんなの駐車場マップ</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🅿️</text></svg>" />
+  <link rel="stylesheet" href="styles.css?v=20260729e" />
+</head>
+<body>
+  <div class="reset-wrap">
+    <div class="modal-card auth-card">
+      <div class="modal-head">
+        <h2>パスワード再設定</h2>
+      </div>
+      <p class="admin-lead">新しいパスワードを入力してください。</p>
+      <form id="reset-form">
+        <label class="field">
+          <span>新しいパスワード <em class="hint-inline">（6文字以上）</em></span>
+          <input id="reset-pw" name="password" type="password" autocomplete="new-password" placeholder="新しいパスワード" />
+        </label>
+        <label class="field">
+          <span>確認のためもう一度</span>
+          <input id="reset-pw2" name="password2" type="password" autocomplete="new-password" placeholder="もう一度入力" />
+        </label>
+        <p id="reset-error" class="form-error hidden"></p>
+        <p id="reset-msg" class="auth-msg hidden"></p>
+        <div class="modal-actions">
+          <button type="submit" id="reset-submit" class="primary-btn">パスワードを変更する</button>
+        </div>
+      </form>
+      <p class="admin-note"><a href="/">← 地図にもどる</a></p>
+    </div>
+  </div>
+  <script src="reset.js?v=20260729e"></script>
+</body>
+</html>
