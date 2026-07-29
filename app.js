@@ -30,6 +30,8 @@ const state = {
 
 // ---- 地図初期化 ----
 const map = L.map('map', { zoomControl: true }).setView([35.681236, 139.767125], 15); // 東京駅付近を初期表示
+// 「Leaflet」表記は任意なので消す（© OpenStreetMap はライセンス上必須のため残す）
+map.attributionControl.setPrefix(false);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -217,27 +219,12 @@ function showOsmLoading(on) {
 }
 
 async function fetchOverpassParking(b) {
-  const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
-  const q = `[out:json][timeout:20];(node["amenity"="parking"](${bbox});way["amenity"="parking"](${bbox}););out center 120;`;
-  const endpoints = [
-    'https://overpass-api.de/api/interpreter',
-    'https://overpass.kumi.systems/api/interpreter',
-  ];
-  for (const url of endpoints) {
-    try {
-      const res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q) });
-      if (!res.ok) continue;
-      const d = await res.json();
-      return (d.elements || [])
-        .map((e) => ({
-          lat: e.lat != null ? e.lat : (e.center && e.center.lat),
-          lng: e.lon != null ? e.lon : (e.center && e.center.lon),
-          name: (e.tags && (e.tags['name:ja'] || e.tags.name)) || '',
-        }))
-        .filter((x) => x.lat != null && x.lng != null);
-    } catch (e) { /* 次のエンドポイントへ */ }
-  }
-  return [];
+  // サーバー側キャッシュ経由で取得（2回目以降は誰でも高速・Overpass負荷も軽減）
+  const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(',');
+  const res = await fetch('/api/parking-nearby?bbox=' + encodeURIComponent(bbox));
+  if (!res.ok) return [];
+  const d = await res.json();
+  return (d.parkings || []).filter((x) => x.lat != null && x.lng != null);
 }
 
 function renderOsmPins(els) {

@@ -9,6 +9,7 @@ require __DIR__ . '/../lib/estimate.php';
 require __DIR__ . '/../lib/helpers.php';
 require __DIR__ . '/../lib/trust.php';
 require __DIR__ . '/../lib/reputation.php';
+require __DIR__ . '/../lib/overpass.php';
 require __DIR__ . '/../lib/db.php';
 
 $configPath = __DIR__ . '/../lib/config.php';
@@ -191,6 +192,16 @@ if (preg_match('#^/lots/(\d+)/(confirm|report)$#', $route, $m) && $method === 'P
         'lot' => decorate_lot($result['lot'], 1),
         'me'  => ['nickname' => $stats['nickname']] + reputation($stats),
     ]);
+}
+
+// GET /api/parking-nearby?bbox=minLng,minLat,maxLng,maxLat  （地図上のP：OSM駐車場・サーバーキャッシュ）
+if ($route === '/parking-nearby' && $method === 'GET') {
+    $bbox = parse_bbox($_GET['bbox'] ?? null);
+    if (!$bbox) {
+        json_out(['parkings' => []]);
+    }
+    $list = parking_nearby($bbox, __DIR__ . '/../cache');
+    json_out(['parkings' => $list]);
 }
 
 // GET /api/users/me?token=...  （自分の貢献ランク・バッジ）

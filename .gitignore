@@ -1,5 +1,6 @@
 node_modules/
 data/
+cache/
 uploads/*
 !uploads/.gitkeep
 !uploads/.htaccess
