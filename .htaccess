@@ -14,3 +14,10 @@ DirectoryIndex index.html
 
 # 文字コード
 AddDefaultCharset UTF-8
+
+# HTML/JS/CSS はキャッシュせず毎回確認（更新が確実に反映されるように）
+<IfModule mod_headers.c>
+  <FilesMatch "\.(html|js|css)$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+</IfModule>
