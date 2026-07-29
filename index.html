@@ -21,36 +21,8 @@
       </div>
     </header>
 
-    <div class="controls">
-      <div class="control-group">
-        <span class="control-label">並び替え</span>
-        <div class="segmented" id="sort-seg">
-          <button data-sort="distance">近い順</button>
-          <button data-sort="estimate" class="active">概算が安い順</button>
-          <button data-sort="hourly">時間料金順</button>
-          <button data-sort="max">最大料金順</button>
-          <button data-sort="updated">新しい順</button>
-        </div>
-      </div>
-      <div class="control-group">
-        <span class="control-label">駐車時間</span>
-        <div class="segmented" id="hours-seg">
-          <button data-hours="0.5">30分</button>
-          <button data-hours="1" class="active">1時間</button>
-          <button data-hours="3">3時間</button>
-          <button data-hours="24">1日</button>
-        </div>
-      </div>
-    </div>
-
     <main class="layout">
       <div id="map"></div>
-      <aside id="list-panel" class="list-panel">
-        <div class="list-header">
-          <span id="list-count">駐車場を読み込み中…</span>
-        </div>
-        <ul id="lot-list" class="lot-list"></ul>
-      </aside>
     </main>
 
     <div id="add-hint" class="add-hint hidden">

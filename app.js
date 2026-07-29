@@ -342,6 +342,7 @@ function ratesText(lot) {
 
 function renderList() {
   const ul = $('#lot-list');
+  if (!ul) return; // 一覧サイドバーは廃止（地図中心UI）
   ul.innerHTML = '';
   $('#list-count').textContent = state.lots.length
     ? `${state.lots.length}件の駐車場（${sortLabel()}）`
@@ -542,7 +543,9 @@ function applyUserPos(pos, options, recenter) {
 }
 
 function setActiveSortButton(sort) {
-  $('#sort-seg').querySelectorAll('button').forEach((x) =>
+  const seg = $('#sort-seg');
+  if (!seg) return; // 並び替えUIは廃止
+  seg.querySelectorAll('button').forEach((x) =>
     x.classList.toggle('active', x.dataset.sort === sort));
 }
 
@@ -867,21 +870,6 @@ document.addEventListener('click', (e) => {
 $('#lightbox').addEventListener('click', () => $('#lightbox').classList.add('hidden'));
 
 // ---- コントロール ----
-$('#sort-seg').addEventListener('click', (e) => {
-  const b = e.target.closest('button');
-  if (!b) return;
-  state.sort = b.dataset.sort;
-  $('#sort-seg').querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
-  loadLots();
-});
-$('#hours-seg').addEventListener('click', (e) => {
-  const b = e.target.closest('button');
-  if (!b) return;
-  state.hours = Number(b.dataset.hours);
-  $('#hours-seg').querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
-  loadLots();
-});
-
 $('#btn-add-rate').addEventListener('click', () => addRateRow(60, '', false));
 $('#btn-add-rate-window').addEventListener('click', () => addRateWindowRow('20:00', '08:00', ''));
 $('#rank-chip').addEventListener('click', openProfile);
