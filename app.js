@@ -172,30 +172,44 @@ function scheduleReload() {
 const osmLayer = L.layerGroup().addTo(map);
 const osmCache = new Map(); // bboxキー -> 要素配列
 let osmFetching = false;
+let osmPendingKey = null; // 取得中に画面が変わったら、あとで最新ビューを取り直す
+
+const OSM_MIN_ZOOM = 13; // これ以上ズームしたら地図上の駐車場(P)を表示
 
 function bboxKey(b) {
   return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((x) => x.toFixed(3)).join(',');
 }
 
 async function refreshOsmPins() {
-  // ズームが浅いと数が多すぎるので、ある程度拡大したときだけ表示
-  if (map.getZoom() < 15) { osmLayer.clearLayers(); return; }
+  // ズームが浅すぎると数が多すぎるので、ある程度拡大したときだけ表示
+  if (map.getZoom() < OSM_MIN_ZOOM) { osmLayer.clearLayers(); return; }
   const b = map.getBounds();
   const key = bboxKey(b);
-  let els = osmCache.get(key);
-  if (!els) {
-    if (osmFetching) return;
-    osmFetching = true;
-    try { els = await fetchOverpassParking(b); osmCache.set(key, els); }
-    catch (e) { els = []; }
-    finally { osmFetching = false; }
+
+  // キャッシュがあれば即描画（スナップ感）
+  const cached = osmCache.get(key);
+  if (cached) { renderOsmPins(cached); return; }
+
+  // すでに取得中なら、最新ビューを覚えておいて後で取り直す（更新の取りこぼし防止）
+  if (osmFetching) { osmPendingKey = key; return; }
+  osmFetching = true;
+  try {
+    const els = await fetchOverpassParking(b);
+    osmCache.set(key, els);
+    // 取得完了時にまだ同じビューなら描画（ズーム連打で古い結果を出さない）
+    if (bboxKey(map.getBounds()) === key) renderOsmPins(els);
+  } catch (e) { /* 失敗は無視 */ }
+  finally {
+    osmFetching = false;
+    // 取得中に画面が変わっていたら、最新ビューで取り直す
+    if (osmPendingKey && osmPendingKey !== key) { osmPendingKey = null; refreshOsmPins(); }
+    else { osmPendingKey = null; }
   }
-  renderOsmPins(els);
 }
 
 async function fetchOverpassParking(b) {
   const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
-  const q = `[out:json][timeout:20];(node["amenity"="parking"](${bbox});way["amenity"="parking"](${bbox}););out center 80;`;
+  const q = `[out:json][timeout:20];(node["amenity"="parking"](${bbox});way["amenity"="parking"](${bbox}););out center 120;`;
   const endpoints = [
     'https://overpass-api.de/api/interpreter',
     'https://overpass.kumi.systems/api/interpreter',
