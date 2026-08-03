@@ -145,6 +145,7 @@ function require_login(): string
 // 駐車場を JSON 用に整形（概算料金を付与）
 function decorate_lot(array $lot, float $hours): array
 {
+    $lot['kind'] = ($lot['kind'] ?? 'parking') === 'shop' ? 'shop' : 'parking';
     $lot['estimate'] = estimateFee($lot, $hours);
     $lot['rates'] = normalizeRates($lot['rates'] ?? null); // 料金行を配列で返す
     $lot['trust'] = trustLevel($lot); // 信頼度ランク（みんなの確認で上がる）
@@ -211,21 +212,23 @@ if ($route === '/lots' && $method === 'POST') {
     if (isset($photo['error'])) {
         json_error($photo['error'], 400);
     }
-    // 写真は必須（情報の信頼性を担保するため、写真なしの登録は受け付けない）
-    if (empty($photo['filename'])) {
+    $data = $parsed['data'];
+    // 写真は駐車場では必須（料金の根拠）。店では任意（営業時間がメイン情報）。
+    if ($data['kind'] !== 'shop' && empty($photo['filename'])) {
         json_error('料金看板の写真を添付してください（写真は必須です）', 400);
     }
     $account = $db->getAccountByToken($token);
-    $data = $parsed['data'];
     $data['photo']  = $photo['filename'];
     $data['source'] = 'user';
     $data['nickname'] = $account['username'] ?? null; // 投稿者名はアカウント名
-    // 可変料金行（rates）: 指定があれば保存し、比較用 hourly/max を導出して上書き
-    $rates = process_rates($_POST['rates'] ?? null);
-    $data['rates'] = $rates['json'];
-    if ($rates['json'] !== null) {
-        $data['hourly_rate'] = $rates['derived']['hourly_rate'];
-        $data['max_rate']    = $rates['derived']['max_rate'];
+    // 可変料金行（rates）: 指定があれば保存し、比較用 hourly/max を導出して上書き（駐車場のみ）
+    if ($data['kind'] !== 'shop') {
+        $rates = process_rates($_POST['rates'] ?? null);
+        $data['rates'] = $rates['json'];
+        if ($rates['json'] !== null) {
+            $data['hourly_rate'] = $rates['derived']['hourly_rate'];
+            $data['max_rate']    = $rates['derived']['max_rate'];
+        }
     }
     $data['created_by_token'] = $token;
     $lot = $db->createLot($data);
@@ -253,11 +256,51 @@ if (preg_match('#^/lots/(\d+)$#', $route, $m) && $method === 'POST') {
     if (isset($photo['error'])) {
         json_error($photo['error'], 400);
     }
+    $data = $parsed['data'];
+    $isShop = ($existing['kind'] ?? 'parking') === 'shop';
+    // 「確定済み(赤ピン=source:user)」の店への編集だけ承認制にする。
+    // グレー(未編集/OSM由来)の店の初回編集は即時反映（グレー→赤）。
+    $isEstablishedShop = $isShop && (($existing['source'] ?? '') === 'user');
+
+    // ---- 確定済みの店（赤）の編集は「提案」として保留し、10承認で確定 ----
+    if ($isEstablishedShop) {
+        $token = current_token();
+        $payload = [
+            'name'     => $data['name'],
+            'lat'      => $data['lat'],
+            'lng'      => $data['lng'],
+            'address'  => $data['address'],
+            'hours'    => $data['hours'],
+            'category' => $data['category'],
+            'fee_note' => $data['fee_note'],
+        ];
+        if (!empty($photo['filename'])) {
+            $payload['photo'] = $photo['filename']; // 承認確定時に差し替え
+        }
+        $proposal = $db->createProposal($id, $token, $payload);
+        json_out([
+            'proposed'  => true,
+            'proposal'  => ['id' => (int)$proposal['id'], 'approves_needed' => $proposal['approves_needed']],
+            'threshold' => DB::APPROVE_THRESHOLD,
+        ], 202);
+    }
+
+    // ---- グレー(未確定)の店の編集は即時反映（グレー→赤）。写真任意・料金なし ----
+    if ($isShop) {
+        $data['photo'] = $photo['filename']; // null なら維持
+        $data['source'] = 'user';
+        $lot = $db->updateLot($id, $data);
+        if ($photo['filename'] && $existing['photo'] && $existing['photo'] !== $lot['photo']) {
+            @unlink($UPLOAD_DIR . '/' . $existing['photo']);
+        }
+        json_out(['lot' => decorate_lot($lot, 1)]);
+    }
+
+    // ---- 駐車場（parking）は従来どおり即時反映 ----
     // 編集でも写真は必須。新しい写真が無く、既存写真も無ければ拒否
     if (empty($photo['filename']) && empty($existing['photo'])) {
         json_error('料金看板の写真を添付してください（写真は必須です）', 400);
     }
-    $data = $parsed['data'];
     $data['photo'] = $photo['filename']; // null なら維持（db 側で COALESCE）
     $data['source'] = 'user'; // 上書き編集された情報はユーザー情報扱い（地図で赤ピン）
     $rates = process_rates($_POST['rates'] ?? null);
@@ -300,6 +343,56 @@ if (preg_match('#^/lots/(\d+)/(confirm|report)$#', $route, $m) && $method === 'P
         'lot' => decorate_lot($result['lot'], 1),
         'me'  => ['nickname' => $stats['nickname']] + reputation($stats),
     ]);
+}
+
+// GET /api/lots/{id}/proposals  （店への承認待ち編集の一覧）
+if (preg_match('#^/lots/(\d+)/proposals$#', $route, $m) && $method === 'GET') {
+    $id = (int)$m[1];
+    $list = array_map(function ($p) {
+        return [
+            'id'              => (int)$p['id'],
+            'payload'         => $p['payload'],
+            'approve_count'   => (int)$p['approve_count'],
+            'approves_needed' => (int)$p['approves_needed'],
+            'created_at'      => $p['created_at'],
+        ];
+    }, $db->listPendingProposals($id));
+    json_out(['proposals' => $list, 'threshold' => DB::APPROVE_THRESHOLD]);
+}
+
+// POST /api/proposals/{id}/approve  （編集提案を承認。10承認で確定）
+if (preg_match('#^/proposals/(\d+)/approve$#', $route, $m) && $method === 'POST') {
+    require_same_origin();
+    $token = require_login(); // 承認もログイン必須。1アカウント1票
+    rate_guard($db, 'vote', 20, 200);
+    $id = (int)$m[1];
+    $res = $db->approveProposal($id, $token);
+    if (!$res['ok'] && ($res['reason'] ?? '') === 'notfound') {
+        json_error('この編集提案は見つからないか、すでに確定/取り下げされています', 404);
+    }
+    if (!$res['ok'] && ($res['reason'] ?? '') === 'duplicate') {
+        json_error('すでに承認済みです', 409);
+    }
+    $out = [
+        'approved'        => true,
+        'applied'         => $res['applied'],
+        'approve_count'   => (int)$res['proposal']['approve_count'],
+        'approves_needed' => (int)$res['proposal']['approves_needed'],
+    ];
+    if ($res['applied'] && !empty($res['lot'])) {
+        $out['lot'] = decorate_lot($res['lot'], 1);
+    }
+    json_out($out);
+}
+
+// GET /api/places-nearby?bbox=minLng,minLat,maxLng,maxLat  （地図上の店：OSM店POI・サーバーキャッシュ）
+if ($route === '/places-nearby' && $method === 'GET') {
+    $bbox = parse_bbox($_GET['bbox'] ?? null);
+    if (!$bbox) {
+        json_out(['places' => []]);
+    }
+    $list = places_nearby($bbox, __DIR__ . '/../cache');
+    json_out(['places' => $list]);
 }
 
 // GET /api/parking-nearby?bbox=minLng,minLat,maxLng,maxLat  （地図上のP：OSM駐車場・サーバーキャッシュ）

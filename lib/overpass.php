@@ -61,17 +61,12 @@ function parking_nearby(array $bbox, string $cacheDir): array
     return [];
 }
 
-/** Overpass API を叩いて駐車場を取得。失敗時は null。 */
-function overpass_fetch(float $minLat, float $minLng, float $maxLat, float $maxLng): ?array
+/**
+ * Overpass に問い合わせて elements 配列（生）を返す。全滅時は null。
+ * エンドポイントを順に試し、プロキシ環境にも対応。
+ */
+function overpass_post(string $q): ?array
 {
-    $bbox = "$minLat,$minLng,$maxLat,$maxLng";
-    // access が「私有・客専用」等のものはクエリ段階で除外（負の正規表現。access タグ無しは残る）
-    $excl = '^(' . implode('|', OVERPASS_EXCLUDE_ACCESS) . ')$';
-    $q = '[out:json][timeout:20];('
-        . 'node["amenity"="parking"]["access"!~"' . $excl . '"](' . $bbox . ');'
-        . 'way["amenity"="parking"]["access"!~"' . $excl . '"](' . $bbox . ');'
-        . ');out tags center ' . OVERPASS_LIMIT . ';';
-
     $endpoints = [
         'https://overpass-api.de/api/interpreter',
         'https://overpass.kumi.systems/api/interpreter',
@@ -106,23 +101,136 @@ function overpass_fetch(float $minLat, float $minLng, float $maxLat, float $maxL
         if (!is_array($d) || !isset($d['elements'])) {
             continue;
         }
-        $out = [];
-        foreach ($d['elements'] as $e) {
-            $lat = $e['lat'] ?? ($e['center']['lat'] ?? null);
-            $lng = $e['lon'] ?? ($e['center']['lon'] ?? null);
-            if ($lat === null || $lng === null) {
-                continue;
-            }
-            $tags = $e['tags'] ?? [];
-            // 念のためサーバー側でも除外（クエリのすり抜け対策）。
-            $access = strtolower((string)($tags['access'] ?? ''));
-            if (in_array($access, OVERPASS_EXCLUDE_ACCESS, true)) {
-                continue;
-            }
-            $name = $tags['name:ja'] ?? ($tags['name'] ?? '');
-            $out[] = ['lat' => (float)$lat, 'lng' => (float)$lng, 'name' => (string)$name];
-        }
-        return $out;
+        return $d['elements'];
     }
     return null;
+}
+
+/** Overpass API を叩いて駐車場を取得。失敗時は null。 */
+function overpass_fetch(float $minLat, float $minLng, float $maxLat, float $maxLng): ?array
+{
+    $bbox = "$minLat,$minLng,$maxLat,$maxLng";
+    // access が「私有・客専用」等のものはクエリ段階で除外（負の正規表現。access タグ無しは残る）
+    $excl = '^(' . implode('|', OVERPASS_EXCLUDE_ACCESS) . ')$';
+    $q = '[out:json][timeout:20];('
+        . 'node["amenity"="parking"]["access"!~"' . $excl . '"](' . $bbox . ');'
+        . 'way["amenity"="parking"]["access"!~"' . $excl . '"](' . $bbox . ');'
+        . ');out tags center ' . OVERPASS_LIMIT . ';';
+
+    $elements = overpass_post($q);
+    if ($elements === null) {
+        return null;
+    }
+    $out = [];
+    foreach ($elements as $e) {
+        $lat = $e['lat'] ?? ($e['center']['lat'] ?? null);
+        $lng = $e['lon'] ?? ($e['center']['lon'] ?? null);
+        if ($lat === null || $lng === null) {
+            continue;
+        }
+        $tags = $e['tags'] ?? [];
+        // 念のためサーバー側でも除外（クエリのすり抜け対策）。
+        $access = strtolower((string)($tags['access'] ?? ''));
+        if (in_array($access, OVERPASS_EXCLUDE_ACCESS, true)) {
+            continue;
+        }
+        $name = $tags['name:ja'] ?? ($tags['name'] ?? '');
+        $out[] = ['lat' => (float)$lat, 'lng' => (float)$lng, 'name' => (string)$name];
+    }
+    return $out;
+}
+
+// ---- 店（shop / 飲食店など）POI ----
+// OSM の代表的な業種を「店」グレーピンとして表示する。営業時間(opening_hours)も拾う。
+const PLACES_CATEGORY_MAP = [
+    'fast_food'    => 'ファストフード',
+    'restaurant'   => '飲食店',
+    'cafe'         => 'カフェ',
+    'convenience'  => 'コンビニ',
+    'supermarket'  => 'スーパー',
+    'drugstore'    => 'ドラッグストア',
+    'pharmacy'     => 'ドラッグストア',
+];
+
+/**
+ * 指定 bbox の店POI一覧を返す（キャッシュ優先）。駐車場と同じグリッド/TTL方式。
+ * @return array<int,array{lat:float,lng:float,name:string,hours:string,category:string}>
+ */
+function places_nearby(array $bbox, string $cacheDir): array
+{
+    $minLat = floor($bbox['minLat'] * 100) / 100;
+    $maxLat = ceil($bbox['maxLat'] * 100) / 100;
+    $minLng = floor($bbox['minLng'] * 100) / 100;
+    $maxLng = ceil($bbox['maxLng'] * 100) / 100;
+
+    if (($maxLat - $minLat) > OVERPASS_MAX_SPAN || ($maxLng - $minLng) > OVERPASS_MAX_SPAN) {
+        return [];
+    }
+    if (!is_dir($cacheDir)) {
+        @mkdir($cacheDir, 0775, true);
+    }
+    $key  = md5(OVERPASS_QUERY_VER . ":places:$minLat,$minLng,$maxLat,$maxLng");
+    $file = $cacheDir . '/places_' . $key . '.json';
+
+    if (is_file($file) && (time() - filemtime($file) < OVERPASS_CACHE_TTL)) {
+        $c = json_decode(file_get_contents($file), true);
+        if (is_array($c)) {
+            return $c;
+        }
+    }
+    $data = places_fetch($minLat, $minLng, $maxLat, $maxLng);
+    if ($data !== null) {
+        @file_put_contents($file, json_encode($data, JSON_UNESCAPED_UNICODE));
+        return $data;
+    }
+    if (is_file($file)) {
+        $c = json_decode(file_get_contents($file), true);
+        if (is_array($c)) {
+            return $c;
+        }
+    }
+    return [];
+}
+
+/** Overpass で店POIを取得。失敗時は null。名前のあるものだけ返す。 */
+function places_fetch(float $minLat, float $minLng, float $maxLat, float $maxLng): ?array
+{
+    $bbox = "$minLat,$minLng,$maxLat,$maxLng";
+    $amenity = 'fast_food|restaurant|cafe';
+    $shop    = 'convenience|supermarket';
+    $q = '[out:json][timeout:20];('
+        . 'node["amenity"~"^(' . $amenity . ')$"]["name"](' . $bbox . ');'
+        . 'way["amenity"~"^(' . $amenity . ')$"]["name"](' . $bbox . ');'
+        . 'node["shop"~"^(' . $shop . ')$"]["name"](' . $bbox . ');'
+        . 'way["shop"~"^(' . $shop . ')$"]["name"](' . $bbox . ');'
+        . ');out tags center ' . OVERPASS_LIMIT . ';';
+
+    $elements = overpass_post($q);
+    if ($elements === null) {
+        return null;
+    }
+    $out = [];
+    foreach ($elements as $e) {
+        $lat = $e['lat'] ?? ($e['center']['lat'] ?? null);
+        $lng = $e['lon'] ?? ($e['center']['lon'] ?? null);
+        if ($lat === null || $lng === null) {
+            continue;
+        }
+        $tags = $e['tags'] ?? [];
+        $name = $tags['name:ja'] ?? ($tags['name'] ?? '');
+        if ($name === '') {
+            continue;
+        }
+        $catKey = $tags['amenity'] ?? ($tags['shop'] ?? '');
+        $category = PLACES_CATEGORY_MAP[$catKey] ?? '店舗';
+        $hours = (string)($tags['opening_hours'] ?? '');
+        $out[] = [
+            'lat'      => (float)$lat,
+            'lng'      => (float)$lng,
+            'name'     => (string)$name,
+            'hours'    => $hours,
+            'category' => $category,
+        ];
+    }
+    return $out;
 }

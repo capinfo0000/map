@@ -41,6 +41,8 @@ button { font-family: inherit; cursor: pointer; }
   padding: 9px 16px; font-size: 14px; font-weight: 600; box-shadow: var(--shadow);
 }
 .primary-btn:hover { background: var(--brand-dark); }
+.primary-btn--shop { background: #7c3aed; }
+.primary-btn--shop:hover { background: #6d28d9; }
 .ghost-btn {
   background: #eef1f5; color: var(--ink); border: none; border-radius: 999px;
   padding: 9px 16px; font-size: 14px; font-weight: 600;
@@ -203,6 +205,8 @@ button { font-family: inherit; cursor: pointer; }
 .pin-gold { background: #e0a400; }
 .pin-gold span, .pin-cert span { color: #fff; }
 .pin-osm { background: var(--gray); opacity: 0.9; border-style: dashed; } /* 地図上のP（未登録） */
+/* 店ピン: 絵文字(🏬)を表示。色は共通の gray(未編集)/red(更新済み)。駐車場とは絵文字で区別 */
+.pin-shop span { font-size: 15px; transform: rotate(45deg); }
 
 /* 信頼度バッジ */
 .badge-cert { background: #fdf0cf; color: #8a5a00; }
@@ -236,6 +240,21 @@ button { font-family: inherit; cursor: pointer; }
 }
 .terms-link:hover { color: var(--brand); }
 .auth-card .admin-note a, .admin-lead { color: var(--muted); }
+
+/* 店の編集: 承認制の説明 */
+.edit-note { background: #f3e8ff; color: #6d28d9; padding: 8px 10px; border-radius: 8px; font-size: 12px; margin: 0 0 10px; line-height: 1.6; }
+/* ポップアップ内: 承認待ちの編集提案 */
+.popup-proposals:empty { display: none; }
+.popup-proposals { margin: 8px 0; }
+.prop-head { font-size: 12px; font-weight: 700; color: #6d28d9; margin-bottom: 4px; }
+.prop-item { background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 8px; padding: 6px 8px; margin-bottom: 6px; }
+.prop-diff { font-size: 12px; color: var(--ink); }
+.prop-diff span { color: var(--muted); }
+.prop-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+.prop-need { font-size: 11px; color: var(--muted); }
+.act-approve { background: #7c3aed; color: #fff; border: none; border-radius: 6px; padding: 4px 8px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.act-approve:hover { background: #6d28d9; }
+.act-approve:disabled { opacity: .6; }
 
 .hidden { display: none !important; }
 

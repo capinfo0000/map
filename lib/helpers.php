@@ -48,12 +48,13 @@ function parse_bbox(?string $raw): ?array
  */
 function read_lot_body(array $b): array
 {
+    $kind = ($b['kind'] ?? 'parking') === 'shop' ? 'shop' : 'parking';
     $name = trim($b['name'] ?? '');
     $lat  = isset($b['lat']) ? (float)$b['lat'] : null;
     $lng  = isset($b['lng']) ? (float)$b['lng'] : null;
 
     if ($name === '') {
-        return ['error' => '駐車場名を入力してください'];
+        return ['error' => $kind === 'shop' ? '店名を入力してください' : '駐車場名を入力してください'];
     }
     if ($lat === null || $lng === null || !is_finite($lat) || !is_finite($lng)) {
         return ['error' => '位置（緯度・経度）が不正です'];
@@ -71,6 +72,7 @@ function read_lot_body(array $b): array
     };
 
     return ['data' => [
+        'kind'        => $kind,
         'name'        => mb_substr($name, 0, 120),
         'lat'         => $lat,
         'lng'         => $lng,
@@ -79,6 +81,8 @@ function read_lot_body(array $b): array
         'max_rate'    => toPositiveInt($b['max_rate'] ?? null),
         'fee_note'    => $trimOrNull($b['fee_note'] ?? null, 500),
         'capacity'    => toPositiveInt($b['capacity'] ?? null),
+        'hours'       => $trimOrNull($b['hours'] ?? null, 200),   // 営業時間（店用）
+        'category'    => $trimOrNull($b['category'] ?? null, 40), // 業種（店用）
         'nickname'    => $trimOrNull($b['nickname'] ?? null, 40),
     ]];
 }

@@ -7,7 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🅿️</text></svg>" />
   <meta name="description" content="みんなで作る駐車場マップ。周辺の駐車場と料金を地図で探して、最安値を見つけよう。" />
   <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
-  <link rel="stylesheet" href="styles.css?v=20260729e" />
+  <link rel="stylesheet" href="styles.css?v=20260803a" />
 </head>
 <body>
   <div id="app">
@@ -19,7 +19,8 @@
         <button id="btn-logout" class="icon-btn hidden" title="ログアウト">ログアウト</button>
         <button id="btn-refresh" class="icon-btn" title="この地図を更新">🔄 更新</button>
         <button id="btn-locate" class="icon-btn" title="現在地へ">📍 現在地</button>
-        <button id="btn-add" class="primary-btn">＋ 駐車場を登録</button>
+        <button id="btn-add" class="primary-btn">🅿️ 駐車場を登録</button>
+        <button id="btn-add-shop" class="primary-btn primary-btn--shop">🏬 店を登録</button>
       </div>
     </header>
 
@@ -28,7 +29,7 @@
     </main>
 
     <div id="add-hint" class="add-hint hidden">
-      地図をタップして駐車場の位置を指定してください
+      <span class="add-hint-text">地図をタップして駐車場の位置を指定してください</span>
       <button id="btn-cancel-add" class="link-btn">キャンセル</button>
     </div>
 
@@ -47,17 +48,41 @@
         <input type="hidden" name="id" />
         <input type="hidden" name="lat" />
         <input type="hidden" name="lng" />
+        <input type="hidden" name="kind" value="parking" />
         <!-- ハニーポット: 人間は触らない。bot が入力すると弾く -->
         <div class="hp-field" aria-hidden="true">
           <label>サイト<input name="website" tabindex="-1" autocomplete="off" /></label>
         </div>
 
+        <p id="shop-edit-note" class="edit-note hidden">✏️ 店の情報の編集は、<strong>10人の承認</strong>が集まると確定します（すぐには反映されません）。</p>
+
         <label class="field">
-          <span>駐車場名 <em class="req">必須</em></span>
+          <span id="lbl-name">駐車場名 <em class="req">必須</em></span>
           <input name="name" type="text" maxlength="120" placeholder="例: ○○コインパーキング" required />
         </label>
 
-        <div class="field">
+        <!-- 店用: 営業時間・カテゴリ -->
+        <label class="field hidden" id="fld-hours">
+          <span>営業時間（任意）</span>
+          <input name="hours" type="text" maxlength="200" placeholder="例: 7:00〜23:00 / 24時間 / 月〜金 11:00〜14:00" />
+        </label>
+        <label class="field hidden" id="fld-category">
+          <span>カテゴリ（任意）</span>
+          <select name="category">
+            <option value="">選択しない</option>
+            <option>飲食店</option>
+            <option>ファストフード</option>
+            <option>カフェ</option>
+            <option>コンビニ</option>
+            <option>スーパー</option>
+            <option>ドラッグストア</option>
+            <option>ショッピング</option>
+            <option>その他</option>
+          </select>
+        </label>
+
+        <!-- 駐車場用: 可変料金行 -->
+        <div class="field" id="fld-rates">
           <span>料金 <em class="hint-inline">（看板どおりに行を足せます）</em></span>
           <div id="rate-rows" class="rate-rows"></div>
           <div class="add-rate-btns">
@@ -67,11 +92,11 @@
         </div>
 
         <label class="field">
-          <span>料金メモ（任意）</span>
+          <span id="lbl-note">料金メモ（任意）</span>
           <input name="fee_note" type="text" maxlength="500" placeholder="例: 夜間20時〜8時は最大500円 / 最初30分無料" />
         </label>
 
-        <label class="field">
+        <label class="field" id="fld-capacity">
           <span>台数（任意）</span>
           <input name="capacity" type="number" min="0" inputmode="numeric" placeholder="例: 20" />
         </label>
@@ -82,7 +107,7 @@
         </label>
 
         <label class="field">
-          <span>料金看板の写真 <em class="req">必須</em> <em class="hint-inline">（情報の根拠になります）</em></span>
+          <span id="lbl-photo">料金看板の写真 <em class="req">必須</em> <em class="hint-inline">（情報の根拠になります）</em></span>
           <input id="photo-input" name="photo" type="file" accept="image/*" capture="environment" />
           <div id="photo-preview" class="photo-preview hidden"><img alt="プレビュー" /></div>
         </label>
@@ -162,6 +187,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/vendor/leaflet/leaflet.js"></script>
-  <script src="app.js?v=20260729f"></script>
+  <script src="app.js?v=20260803a"></script>
 </body>
 </html>

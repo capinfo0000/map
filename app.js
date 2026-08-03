@@ -12,6 +12,7 @@ const state = {
   markers: new Map(), // id -> marker
   userPos: null, // {lat, lng}
   addMode: false,
+  addKind: 'parking', // 登録モードの種別（parking | shop）
   pending: null, // {lat, lng} 登録中の位置
   editingId: null,
   me: null, // 自分の貢献ランク {points, rank, nextRank, badges, stats, nickname}
@@ -110,6 +111,13 @@ function distLabel(lot) {
 
 function makePinIcon(lot) {
   const cls = pinClass(lot);
+  if (lot.kind === 'shop') {
+    return L.divIcon({
+      className: '',
+      html: `<div class="pin pin-shop ${cls}"><span>🏬</span></div>`,
+      iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -28],
+    });
+  }
   return L.divIcon({
     className: '',
     html: `<div class="pin ${cls}"><span>${lot.estimate != null ? '¥' + shortYen(lot.estimate) : 'P'}</span></div>`,
@@ -151,7 +159,8 @@ async function loadLots() {
 
   renderMarkers();
   renderList();
-  refreshOsmPins(); // 地図上の「P」(OSMの駐車場)をグレーピンで表示
+  refreshOsmPins();   // 地図上の「P」(OSMの駐車場)をグレーピンで表示
+  refreshOsmPlaces(); // 地図上の「🏬」(OSMの飲食店・コンビニ等)をグレーピンで表示
 }
 
 // 地図移動で周辺を再取得（デバウンス）
@@ -246,6 +255,109 @@ function osmPopupHtml(o) {
     </div>`;
 }
 
+// ---- 地図上の「店」(OpenStreetMap の飲食店・コンビニ等) をグレーピンで表示 ----
+const osmPlacesLayer = L.layerGroup().addTo(map);
+let placesFetching = false;
+let placesPending = false;
+let placesCoverage = null;
+
+async function refreshOsmPlaces() {
+  if (map.getZoom() < OSM_MIN_ZOOM) { osmPlacesLayer.clearLayers(); placesCoverage = null; return; }
+  const view = map.getBounds();
+  if (placesCoverage && placesCoverage.bounds.contains(view)) {
+    renderOsmPlaces(placesCoverage.els);
+    return;
+  }
+  if (placesFetching) { placesPending = true; return; }
+  placesFetching = true;
+  try {
+    const padded = view.pad(0.3);
+    const els = await fetchOverpassPlaces(padded);
+    placesCoverage = { bounds: padded, els };
+    renderOsmPlaces(els);
+  } catch (e) { /* 失敗は無視 */ }
+  finally {
+    placesFetching = false;
+    if (placesPending) { placesPending = false; refreshOsmPlaces(); }
+  }
+}
+
+async function fetchOverpassPlaces(b) {
+  const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(',');
+  const res = await fetch('/api/places-nearby?bbox=' + encodeURIComponent(bbox));
+  if (!res.ok) return [];
+  const d = await res.json();
+  return (d.places || []).filter((x) => x.lat != null && x.lng != null);
+}
+
+function renderOsmPlaces(els) {
+  osmPlacesLayer.clearLayers();
+  els.forEach((o) => {
+    // 既にDBにある店（約30m以内）とは重複表示しない
+    const dup = state.lots.some((l) => l.kind === 'shop' && distanceKm({ lat: o.lat, lng: o.lng }, l) < 0.03);
+    if (dup) return;
+    const icon = L.divIcon({
+      className: '',
+      html: '<div class="pin pin-gray pin-shop pin-osm"><span>🏬</span></div>',
+      iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -28],
+    });
+    const m = L.marker([o.lat, o.lng], { icon });
+    m.bindPopup(osmPlacePopupHtml(o));
+    osmPlacesLayer.addLayer(m);
+  });
+}
+
+function osmPlacePopupHtml(o) {
+  const nm = o.name ? escapeHtml(o.name) : '店舗';
+  const cat = o.category ? escapeHtml(o.category) : '';
+  return `<div class="popup">
+      <p class="popup-name">🏬 ${nm}</p>
+      ${cat ? `<p class="popup-note">🏷️ ${cat}</p>` : ''}
+      ${o.hours ? `<p class="popup-note">🕒 ${escapeHtml(o.hours)}</p>` : ''}
+      <p class="popup-note">地図上の店です。営業時間などを登録できます。</p>
+      <div class="popup-actions">
+        <button class="act-placereg" data-lat="${o.lat}" data-lng="${o.lng}"
+          data-name="${nm}" data-hours="${escapeHtml(o.hours || '')}" data-category="${cat}">＋ この店を登録</button>
+      </div>
+    </div>`;
+}
+
+// ---- 店の編集提案（承認制） ----
+// ラベル対応: payload のフィールド名 → 日本語
+const PROPOSAL_LABELS = { name: '店名', hours: '営業時間', category: 'カテゴリ', address: '住所', fee_note: 'メモ', photo: '写真', lat: '緯度', lng: '経度' };
+
+async function loadProposals(lotId) {
+  const box = document.querySelector(`.popup-proposals[data-id="${lotId}"]`);
+  if (!box) return;
+  try {
+    const res = await fetch(`/api/lots/${lotId}/proposals`);
+    if (!res.ok) return;
+    const d = await res.json();
+    renderProposals(box, d.proposals || []);
+  } catch (e) { /* 取得失敗は無言 */ }
+}
+
+function renderProposals(box, proposals) {
+  if (!proposals.length) { box.innerHTML = ''; return; }
+  const current = state.lots.find((l) => l.id === Number(box.dataset.id)) || {};
+  box.innerHTML = `<div class="prop-head">✏️ 承認待ちの編集提案 ${proposals.length}件</div>` +
+    proposals.map((p) => {
+      // 現状と違うフィールドだけ差分表示
+      const diffs = Object.keys(p.payload)
+        .filter((k) => k !== 'photo' && String(p.payload[k] ?? '') !== String(current[k] ?? ''))
+        .map((k) => `<div class="prop-diff"><span>${PROPOSAL_LABELS[k] || k}</span>: ${escapeHtml(String(p.payload[k] ?? '（空）'))}</div>`)
+        .join('');
+      const photoNote = p.payload.photo ? '<div class="prop-diff">写真: 差し替えあり</div>' : '';
+      return `<div class="prop-item">
+          ${diffs || '<div class="prop-diff">（内容の変更なし）</div>'}${photoNote}
+          <div class="prop-foot">
+            <span class="prop-need">あと ${p.approves_needed} 人の承認で確定</span>
+            <button class="act-approve" data-pid="${p.id}" data-lot="${box.dataset.id}">👍 この編集を承認</button>
+          </div>
+        </div>`;
+    }).join('');
+}
+
 function renderMarkers() {
   // 既存マーカーをクリア
   state.markers.forEach((m) => map.removeLayer(m));
@@ -254,11 +366,16 @@ function renderMarkers() {
     const marker = L.marker([lot.lat, lot.lng], { icon: makePinIcon(lot) }).addTo(map);
     marker.on('click', () => marker.setPopupContent(popupHtml(lot)));
     marker.bindPopup(popupHtml(lot), { minWidth: 220, maxWidth: 260 });
+    // 店は開いたときに「承認待ちの編集」を読み込んで表示
+    if (lot.kind === 'shop') {
+      marker.on('popupopen', () => loadProposals(lot.id));
+    }
     state.markers.set(lot.id, marker);
   });
 }
 
 function popupHtml(lot) {
+  if (lot.kind === 'shop') return shopPopupHtml(lot);
   const fresh = freshness(lot);
   const dist = distLabel(lot);
   const photo = lot.photo
@@ -285,6 +402,40 @@ function popupHtml(lot) {
         ${lot.confirm_count ? `<span>✅ ${lot.confirm_count}</span>` : ''}
         ${lot.nickname ? `<span>by ${escapeHtml(lot.nickname)}</span>` : ''}
       </div>
+      <div class="popup-actions">
+        <button class="act-confirm" data-act="confirm" data-id="${lot.id}">✅ 情報は正しい</button>
+        <button class="act-report" data-act="report" data-id="${lot.id}">⚠️ 違う/古い</button>
+        <button class="act-report" data-act="inappropriate" data-id="${lot.id}">🚩 不適切</button>
+        <button class="act-edit" data-act="edit" data-id="${lot.id}">✏️ 編集</button>
+      </div>
+    </div>`;
+}
+
+// 店（shop）用ポップアップ。営業時間がメイン情報。編集は10承認で確定。
+function shopPopupHtml(lot) {
+  const fresh = freshness(lot);
+  const dist = distLabel(lot);
+  const photo = lot.photo
+    ? `<img class="popup-photo" src="/uploads/${lot.photo}" alt="店の写真" data-photo="${lot.photo}" title="タップで拡大" />`
+    : '';
+  const sample = lot.source === 'osm' ? '<span class="badge badge-sample">🔰 サンプル・未確認</span>' : '';
+  return `
+    <div class="popup" data-id="${lot.id}" data-kind="shop">
+      ${photo}
+      <p class="popup-name">🏬 ${escapeHtml(lot.name)}</p>
+      ${lot.category ? `<p class="popup-note">🏷️ ${escapeHtml(lot.category)}</p>` : ''}
+      <p class="popup-note">🕒 営業時間: <strong>${lot.hours ? escapeHtml(lot.hours) : '未登録'}</strong></p>
+      ${lot.fee_note ? `<p class="popup-note">📝 ${escapeHtml(lot.fee_note)}</p>` : ''}
+      ${lot.address ? `<p class="popup-note">📍 ${escapeHtml(lot.address)}</p>` : ''}
+      <div class="popup-meta">
+        ${trustBadge(lot)}
+        <span class="badge ${fresh.cls}">${fresh.label}</span>
+        ${sample}
+        ${dist ? `<span>🚶 ${dist}</span>` : ''}
+        ${lot.confirm_count ? `<span>✅ ${lot.confirm_count}</span>` : ''}
+        ${lot.nickname ? `<span>by ${escapeHtml(lot.nickname)}</span>` : ''}
+      </div>
+      <div class="popup-proposals" data-id="${lot.id}"></div>
       <div class="popup-actions">
         <button class="act-confirm" data-act="confirm" data-id="${lot.id}">✅ 情報は正しい</button>
         <button class="act-report" data-act="report" data-id="${lot.id}">⚠️ 違う/古い</button>
@@ -390,6 +541,30 @@ async function vote(id, kind, reason) {
     await loadLots();
   } catch (e) {
     toast('通信に失敗しました');
+  }
+}
+
+// 店の編集提案を承認する（10承認で確定）
+async function approveProposal(pid, lotId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '承認中…'; }
+  try {
+    const res = await fetch(`/api/proposals/${pid}/approve`, { method: 'POST' });
+    const json = await res.json();
+    if (res.status === 401) { openAuth('login'); return; }
+    if (res.status === 409) { toast('すでに承認済みです'); return; }
+    if (!res.ok) { toast(json.error || 'エラーが発生しました'); if (btn) { btn.disabled = false; btn.textContent = '👍 この編集を承認'; } return; }
+    if (json.applied) {
+      toast('承認が集まり、編集が確定しました🎉');
+      await loadLots();
+      const m = state.markers.get(lotId);
+      if (m) m.openPopup();
+    } else {
+      toast(`承認しました。あと${json.approves_needed}人で確定します`);
+      loadProposals(lotId); // 一覧を更新
+    }
+  } catch (e) {
+    toast('通信に失敗しました');
+    if (btn) { btn.disabled = false; btn.textContent = '👍 この編集を承認'; }
   }
 }
 
@@ -592,12 +767,16 @@ function setActiveSortButton(sort) {
 }
 
 // ---- 登録モード ----
-function startAddMode() {
+function startAddMode(kind = 'parking') {
   state.addMode = true;
+  state.addKind = kind;
   state.editingId = null;
-  $('#add-hint').classList.remove('hidden');
+  const hint = $('#add-hint');
+  hint.querySelector('.add-hint-text').textContent = kind === 'shop'
+    ? '地図をタップして店の位置を指定してください'
+    : '地図をタップして駐車場の位置を指定してください';
+  hint.classList.remove('hidden');
   map.getContainer().style.cursor = 'crosshair';
-  // 現在地があれば、そこを初期候補にできるようヒントを出すだけ（タップで確定）
 }
 function stopAddMode() {
   state.addMode = false;
@@ -608,8 +787,9 @@ function stopAddMode() {
 map.on('click', (e) => {
   if (!state.addMode) return;
   state.pending = { lat: e.latlng.lat, lng: e.latlng.lng };
+  const kind = state.addKind;
   stopAddMode();
-  openForm(null, state.pending);
+  openForm(null, state.pending, { kind });
 });
 
 // ---- 可変料金行（rates） ----
@@ -685,18 +865,44 @@ function gatherRates() {
   return rates;
 }
 
+// フォームを種別(駐車場/店)に合わせて切り替える
+function applyFormKind(kind) {
+  const isShop = kind === 'shop';
+  $('#lot-form').kind.value = isShop ? 'shop' : 'parking';
+  // 店だけ: 営業時間・カテゴリ / 駐車場だけ: 料金行・台数
+  $('#fld-hours').classList.toggle('hidden', !isShop);
+  $('#fld-category').classList.toggle('hidden', !isShop);
+  $('#fld-rates').classList.toggle('hidden', isShop);
+  $('#fld-capacity').classList.toggle('hidden', isShop);
+  // ラベル
+  $('#lbl-name').innerHTML = isShop
+    ? '店名 <em class="req">必須</em>'
+    : '駐車場名 <em class="req">必須</em>';
+  $('#lbl-note').textContent = isShop ? 'メモ（任意）' : '料金メモ（任意）';
+  $('#lbl-photo').innerHTML = isShop
+    ? '店の写真（任意） <em class="hint-inline">（外観や営業時間の看板など）</em>'
+    : '料金看板の写真 <em class="req">必須</em> <em class="hint-inline">（情報の根拠になります）</em>';
+}
+
 // ---- フォーム ----
-function openForm(lot, pos, prefillName) {
+// opts: { kind, name, hours, category }
+function openForm(lot, pos, opts = {}) {
   const form = $('#lot-form');
   form.reset();
   $('#form-error').classList.add('hidden');
   $('#photo-preview').classList.add('hidden');
   $('#photo-preview').querySelector('img').src = '';
 
+  const kind = lot ? (lot.kind || 'parking') : (opts.kind || 'parking');
+  const isShop = kind === 'shop';
+  applyFormKind(kind);
+  // 店の「編集」だけ、10承認で確定する旨を表示
+  $('#shop-edit-note').classList.toggle('hidden', !(isShop && lot));
+
   if (lot) {
     state.editingId = lot.id;
-    $('#modal-title').textContent = '駐車場を編集';
-    $('#btn-submit').textContent = '更新する';
+    $('#modal-title').textContent = isShop ? '店を編集' : '駐車場を編集';
+    $('#btn-submit').textContent = isShop ? '編集を提案する' : '更新する';
     form.id.value = lot.id;
     form.lat.value = lot.lat;
     form.lng.value = lot.lng;
@@ -704,15 +910,19 @@ function openForm(lot, pos, prefillName) {
     form.fee_note.value = lot.fee_note || '';
     form.capacity.value = lot.capacity ?? '';
     form.address.value = lot.address || '';
+    form.hours.value = lot.hours || '';
+    form.category.value = lot.category || '';
     resetRateRows(lot.rates);
     $('#pos-label').textContent = `${lot.lat.toFixed(5)}, ${lot.lng.toFixed(5)}`;
   } else {
     state.editingId = null;
-    $('#modal-title').textContent = '駐車場を登録';
+    $('#modal-title').textContent = isShop ? '店を登録' : '駐車場を登録';
     $('#btn-submit').textContent = '登録する';
     form.lat.value = pos.lat;
     form.lng.value = pos.lng;
-    if (prefillName) form.name.value = prefillName; // OSMのP等から名称を引き継ぐ
+    if (opts.name) form.name.value = opts.name;         // OSMピン等から名称を引き継ぐ
+    if (opts.hours) form.hours.value = opts.hours;       // OSMの営業時間
+    if (opts.category) form.category.value = opts.category;
     resetRateRows(null);
     $('#pos-label').textContent = `${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}`;
     // 位置から住所・名称を自動取得して入力補助（無料のOSM。失敗時は無言でスキップ）
@@ -820,15 +1030,18 @@ $('#lot-form').addEventListener('submit', async (e) => {
   const errEl = $('#form-error');
   errEl.classList.add('hidden');
 
+  const kind = form.kind.value === 'shop' ? 'shop' : 'parking';
+  const isShop = kind === 'shop';
+
   if (!form.name.value.trim()) {
-    errEl.textContent = '駐車場名を入力してください';
+    errEl.textContent = isShop ? '店名を入力してください' : '駐車場名を入力してください';
     return errEl.classList.remove('hidden');
   }
 
-  // 写真は必須（新規は写真ファイル、編集は既存写真があればOK）
+  // 写真: 駐車場は必須（編集は既存写真があればOK）。店は任意。
   const editingLot = state.editingId ? state.lots.find((l) => l.id === state.editingId) : null;
   const hasExistingPhoto = editingLot && editingLot.photo;
-  if (!form.photo.files[0] && !hasExistingPhoto) {
+  if (!isShop && !form.photo.files[0] && !hasExistingPhoto) {
     errEl.textContent = '料金看板の写真を添付してください（写真は必須です）';
     return errEl.classList.remove('hidden');
   }
@@ -838,11 +1051,18 @@ $('#lot-form').addEventListener('submit', async (e) => {
   submitBtn.textContent = '送信中…';
 
   const fd = new FormData();
-  ['name', 'lat', 'lng', 'address', 'fee_note', 'capacity'].forEach((k) => {
+  fd.append('kind', kind);
+  ['name', 'lat', 'lng', 'address', 'fee_note'].forEach((k) => {
     fd.append(k, form[k].value.trim());
   });
   fd.append('website', form.website ? form.website.value : ''); // ハニーポット
-  fd.append('rates', JSON.stringify(gatherRates()));
+  if (isShop) {
+    fd.append('hours', form.hours.value.trim());
+    fd.append('category', form.category.value);
+  } else {
+    fd.append('capacity', form.capacity.value.trim());
+    fd.append('rates', JSON.stringify(gatherRates()));
+  }
   const file = form.photo.files[0];
   if (file) {
     const resized = await resizeImage(file);
@@ -859,6 +1079,17 @@ $('#lot-form').addEventListener('submit', async (e) => {
     if (!res.ok) {
       errEl.textContent = json.error || '保存に失敗しました';
       errEl.classList.remove('hidden');
+      return;
+    }
+    // 確定済みの店の編集は「提案」として保留（10承認で確定）
+    if (json.proposed) {
+      closeForm();
+      const need = json.proposal ? json.proposal.approves_needed : json.threshold;
+      toast(`編集を提案しました。あと${need}人の承認で確定します🙏`);
+      // 承認待ちを見せるため、その店のポップアップを開き直す
+      await loadLots();
+      const m = state.markers.get(editing);
+      if (m) m.openPopup();
       return;
     }
     closeForm();
@@ -898,11 +1129,33 @@ document.addEventListener('click', (e) => {
   // OSMの「P」ピンから料金・写真を登録
   const osmBtn = e.target.closest('.act-osmreg');
   if (osmBtn) {
+    if (!ensureLoggedIn()) return;
     const lat = Number(osmBtn.dataset.lat);
     const lng = Number(osmBtn.dataset.lng);
     map.closePopup();
     stopAddMode();
-    openForm(null, { lat, lng }, osmBtn.dataset.name || '');
+    openForm(null, { lat, lng }, { name: osmBtn.dataset.name || '', kind: 'parking' });
+    return;
+  }
+  // OSMの「🏬」ピンからお店を登録（営業時間などを引き継ぐ）
+  const placeBtn = e.target.closest('.act-placereg');
+  if (placeBtn) {
+    if (!ensureLoggedIn()) return;
+    const lat = Number(placeBtn.dataset.lat);
+    const lng = Number(placeBtn.dataset.lng);
+    map.closePopup();
+    stopAddMode();
+    openForm(null, { lat, lng }, {
+      kind: 'shop', name: placeBtn.dataset.name || '',
+      hours: placeBtn.dataset.hours || '', category: placeBtn.dataset.category || '',
+    });
+    return;
+  }
+  // 店の編集提案を承認
+  const apBtn = e.target.closest('.act-approve');
+  if (apBtn) {
+    if (!ensureLoggedIn()) return;
+    approveProposal(Number(apBtn.dataset.pid), Number(apBtn.dataset.lot), apBtn);
     return;
   }
   const photo = e.target.closest('.popup-photo');
@@ -922,7 +1175,8 @@ $('#profile-close').addEventListener('click', () => $('#profile').classList.add(
 $('#profile').addEventListener('click', (e) => { if (e.target.id === 'profile') $('#profile').classList.add('hidden'); });
 $('#btn-locate').addEventListener('click', () => locate());
 $('#btn-refresh').addEventListener('click', forceRefresh);
-$('#btn-add').addEventListener('click', () => { if (ensureLoggedIn()) startAddMode(); });
+$('#btn-add').addEventListener('click', () => { if (ensureLoggedIn()) startAddMode('parking'); });
+$('#btn-add-shop').addEventListener('click', () => { if (ensureLoggedIn()) startAddMode('shop'); });
 
 // ---- ログイン/登録 ----
 $('#btn-login').addEventListener('click', () => openAuth('login'));

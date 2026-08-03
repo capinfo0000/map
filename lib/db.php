@@ -65,6 +65,7 @@ class DB
         $this->pdo->exec("
             CREATE TABLE IF NOT EXISTS lots (
                 id                $auto,
+                kind              VARCHAR(10) NOT NULL DEFAULT 'parking',
                 name              VARCHAR(120) NOT NULL,
                 lat               DOUBLE NOT NULL,
                 lng               DOUBLE NOT NULL,
@@ -73,6 +74,8 @@ class DB
                 max_rate          INT,
                 fee_note          VARCHAR(500),
                 capacity          INT,
+                hours             VARCHAR(200),
+                category          VARCHAR(40),
                 photo             VARCHAR(255),
                 nickname          VARCHAR(40),
                 source            VARCHAR(20),
@@ -134,6 +137,30 @@ class DB
                 created_at VARCHAR(30) NOT NULL
             )$engine
         ");
+
+        // 編集提案（承認制）: 既存の店(lot)への編集は即時反映せず提案として貯め、
+        // 一定数の承認が集まったら本体へ反映する。payload は変更後フィールドの JSON。
+        $this->pdo->exec("
+            CREATE TABLE IF NOT EXISTS proposals (
+                id             $auto,
+                lot_id         INT NOT NULL,
+                proposer_token VARCHAR(80),
+                payload        TEXT NOT NULL,
+                approve_count  INT NOT NULL DEFAULT 0,
+                status         VARCHAR(12) NOT NULL DEFAULT 'pending',
+                created_at     VARCHAR(30) NOT NULL,
+                updated_at     VARCHAR(30) NOT NULL
+            )$engine
+        ");
+        $this->pdo->exec("
+            CREATE TABLE IF NOT EXISTS proposal_votes (
+                id           $auto,
+                proposal_id  INT NOT NULL,
+                client_token VARCHAR(80) NOT NULL,
+                created_at   VARCHAR(30) NOT NULL,
+                UNIQUE (proposal_id, client_token)
+            )$engine
+        ");
         try {
             $sql = 'CREATE INDEX idx_rate_bucket ON rate_hits (bucket, created_at)';
             if ($this->driver === 'sqlite') {
@@ -156,6 +183,9 @@ class DB
             'ALTER TABLE accounts ADD COLUMN verify_token VARCHAR(80)',
             'ALTER TABLE accounts ADD COLUMN reset_token VARCHAR(80)',
             'ALTER TABLE accounts ADD COLUMN reset_expires VARCHAR(30)',
+            "ALTER TABLE lots ADD COLUMN kind VARCHAR(10) NOT NULL DEFAULT 'parking'",
+            'ALTER TABLE lots ADD COLUMN hours VARCHAR(200)',
+            'ALTER TABLE lots ADD COLUMN category VARCHAR(40)',
         ] as $sql) {
             try {
                 $this->pdo->exec($sql);
@@ -174,6 +204,7 @@ class DB
         foreach ([
             'CREATE INDEX idx_lots_latlng ON lots (lat, lng)',
             'CREATE INDEX idx_reports_lot ON reports (lot_id)',
+            'CREATE INDEX idx_proposals_lot ON proposals (lot_id, status)',
         ] as $sql) {
             try {
                 if ($this->driver === 'sqlite') {
@@ -202,16 +233,19 @@ class DB
     {
         $now = self::nowIso();
         $stmt = $this->pdo->prepare("
-            INSERT INTO lots (name, lat, lng, address, hourly_rate, max_rate, fee_note,
-                              capacity, photo, nickname, source, rates, created_by_token, created_at, updated_at)
-            VALUES (:name, :lat, :lng, :address, :hourly_rate, :max_rate, :fee_note,
-                    :capacity, :photo, :nickname, :source, :rates, :created_by_token, :created_at, :updated_at)
+            INSERT INTO lots (kind, name, lat, lng, address, hourly_rate, max_rate, fee_note,
+                              capacity, hours, category, photo, nickname, source, rates, created_by_token, created_at, updated_at)
+            VALUES (:kind, :name, :lat, :lng, :address, :hourly_rate, :max_rate, :fee_note,
+                    :capacity, :hours, :category, :photo, :nickname, :source, :rates, :created_by_token, :created_at, :updated_at)
         ");
         $stmt->execute([
+            ':kind' => $d['kind'] ?? 'parking',
             ':name' => $d['name'], ':lat' => $d['lat'], ':lng' => $d['lng'],
             ':address' => $d['address'], ':hourly_rate' => $d['hourly_rate'],
             ':max_rate' => $d['max_rate'], ':fee_note' => $d['fee_note'],
-            ':capacity' => $d['capacity'], ':photo' => $d['photo'],
+            ':capacity' => $d['capacity'],
+            ':hours' => $d['hours'] ?? null, ':category' => $d['category'] ?? null,
+            ':photo' => $d['photo'],
             ':nickname' => $d['nickname'], ':source' => $d['source'] ?? 'user',
             ':rates' => $d['rates'] ?? null,
             ':created_by_token' => $d['created_by_token'] ?? null,
@@ -255,7 +289,8 @@ class DB
             UPDATE lots SET
                 name = :name, lat = :lat, lng = :lng, address = :address,
                 hourly_rate = :hourly_rate, max_rate = :max_rate, fee_note = :fee_note,
-                capacity = :capacity, nickname = :nickname, rates = :rates,
+                capacity = :capacity, hours = :hours, category = :category,
+                nickname = :nickname, rates = :rates,
                 source = :source,
                 photo = COALESCE(:photo, photo),
                 updated_at = :updated_at
@@ -265,12 +300,129 @@ class DB
             ':name' => $d['name'], ':lat' => $d['lat'], ':lng' => $d['lng'],
             ':address' => $d['address'], ':hourly_rate' => $d['hourly_rate'],
             ':max_rate' => $d['max_rate'], ':fee_note' => $d['fee_note'],
-            ':capacity' => $d['capacity'], ':nickname' => $d['nickname'],
+            ':capacity' => $d['capacity'],
+            ':hours' => $d['hours'] ?? null, ':category' => $d['category'] ?? null,
+            ':nickname' => $d['nickname'],
             ':rates' => $d['rates'] ?? null,
             ':source' => $d['source'] ?? 'user', // 上書き編集された情報は user 扱い（赤ピン）
             ':photo' => $d['photo'], ':updated_at' => $now, ':id' => $id,
         ]);
         return $this->getLot($id);
+    }
+
+    // ---- 編集提案（承認制） ----
+
+    // 提案がこの承認数に達したら本体へ反映
+    const APPROVE_THRESHOLD = 10;
+
+    /**
+     * 編集提案を作成。payload は反映したいフィールドの連想配列。
+     * @return array 作成した提案（approvesNeeded 付き）
+     */
+    public function createProposal(int $lotId, ?string $token, array $payload): array
+    {
+        $now = self::nowIso();
+        $st = $this->pdo->prepare(
+            'INSERT INTO proposals (lot_id, proposer_token, payload, approve_count, status, created_at, updated_at)
+             VALUES (?, ?, ?, 0, \'pending\', ?, ?)'
+        );
+        $st->execute([$lotId, $token, json_encode($payload, JSON_UNESCAPED_UNICODE), $now, $now]);
+        return $this->getProposal((int)$this->pdo->lastInsertId());
+    }
+
+    public function getProposal(int $id): ?array
+    {
+        $st = $this->pdo->prepare('SELECT * FROM proposals WHERE id = ?');
+        $st->execute([$id]);
+        $p = $st->fetch();
+        if (!$p) {
+            return null;
+        }
+        $p['payload'] = json_decode($p['payload'] ?? '{}', true) ?: [];
+        $p['approves_needed'] = max(0, self::APPROVE_THRESHOLD - (int)$p['approve_count']);
+        return $p;
+    }
+
+    /** ある lot の保留中の提案一覧（新しい順）。 */
+    public function listPendingProposals(int $lotId): array
+    {
+        $st = $this->pdo->prepare(
+            "SELECT * FROM proposals WHERE lot_id = ? AND status = 'pending' ORDER BY id DESC"
+        );
+        $st->execute([$lotId]);
+        $out = [];
+        foreach ($st->fetchAll() as $p) {
+            $p['payload'] = json_decode($p['payload'] ?? '{}', true) ?: [];
+            $p['approves_needed'] = max(0, self::APPROVE_THRESHOLD - (int)$p['approve_count']);
+            $out[] = $p;
+        }
+        return $out;
+    }
+
+    /**
+     * 提案を承認（1アカウント1票）。しきい値に達したら本体へ反映して applied に。
+     * @return array{ok:bool, reason?:string, applied?:bool, proposal?:array, lot?:array}
+     */
+    public function approveProposal(int $proposalId, string $token): array
+    {
+        $now = self::nowIso();
+        $p = $this->getProposal($proposalId);
+        if (!$p || $p['status'] !== 'pending') {
+            return ['ok' => false, 'reason' => 'notfound'];
+        }
+        try {
+            $this->pdo->beginTransaction();
+            // 1アカウント1票（UNIQUE 違反で重複を検知）
+            $this->pdo->prepare(
+                'INSERT INTO proposal_votes (proposal_id, client_token, created_at) VALUES (?, ?, ?)'
+            )->execute([$proposalId, $token, $now]);
+            $this->pdo->prepare(
+                'UPDATE proposals SET approve_count = approve_count + 1, updated_at = ? WHERE id = ?'
+            )->execute([$now, $proposalId]);
+            $this->pdo->commit();
+        } catch (PDOException $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            if ($this->isUniqueViolation($e)) {
+                return ['ok' => false, 'reason' => 'duplicate'];
+            }
+            throw $e;
+        }
+
+        $p = $this->getProposal($proposalId);
+        $applied = false;
+        if ((int)$p['approve_count'] >= self::APPROVE_THRESHOLD) {
+            $this->applyProposal($p);
+            $applied = true;
+            $p = $this->getProposal($proposalId);
+        }
+        return ['ok' => true, 'applied' => $applied, 'proposal' => $p, 'lot' => $this->getLot((int)$p['lot_id'])];
+    }
+
+    /** 提案 payload を lot へ反映し、提案を applied に。 */
+    private function applyProposal(array $p): void
+    {
+        $lot = $this->getLot((int)$p['lot_id']);
+        if (!$lot) {
+            return;
+        }
+        $pl = $p['payload'];
+        // 反映を許可するフィールドのみマージ（安全のためホワイトリスト）
+        $fields = ['name', 'lat', 'lng', 'address', 'hourly_rate', 'max_rate',
+                   'fee_note', 'capacity', 'hours', 'category', 'rates', 'photo'];
+        $merged = $lot;
+        foreach ($fields as $f) {
+            if (array_key_exists($f, $pl)) {
+                $merged[$f] = $pl[$f];
+            }
+        }
+        $merged['nickname'] = $lot['nickname'];
+        $merged['source'] = 'user'; // 承認で確定した編集は user（赤ピン）
+        $merged['photo'] = array_key_exists('photo', $pl) ? $pl['photo'] : null; // null は COALESCE で現状維持
+        $this->updateLot((int)$p['lot_id'], $merged);
+        $this->pdo->prepare("UPDATE proposals SET status = 'applied', updated_at = ? WHERE id = ?")
+            ->execute([self::nowIso(), (int)$p['id']]);
     }
 
     // ---- reports (confirm / report) ----
