@@ -7,8 +7,12 @@
  */
 
 // ポイント配分
-const PT_POST            = 5; // 駐車場を1件登録
-const PT_PHOTO           = 3; // 写真付き投稿（登録ポイントに加算）
+// ※投稿・写真・レビュー・承認のポイントは「公開が確定した時点」でポイント台帳(point_events)に
+//   記録される。ここでの投稿ポイントは台帳合計(ledgerPoints)として合算される。
+const PT_POST            = 5; // 投稿（公開確定時に投稿者へ）＝一番多い
+const PT_PHOTO           = 3; // 写真つき投稿の加算（投稿者へ）
+const PT_REVIEW          = 1; // レビュー（レビュー者へ）
+const PT_APPROVE         = 2; // 承認（承認者へ）
 const PT_VOTE            = 1; // 確認/報告を1回
 const PT_CONFIRM_RECEIVED = 2; // 自分の情報が1回確認された
 const PT_REFRESH_BONUS   = 2; // 「要更新」の情報を再確認して鮮度を保った（確認ポイントに加算）
@@ -32,12 +36,19 @@ function reputation(array $stats): array
     $votes    = (int)($stats['votes'] ?? 0);
     $recv     = (int)($stats['confirmsReceived'] ?? 0);
     $refreshes = (int)($stats['refreshes'] ?? 0);
+    $reviews  = (int)($stats['reviews'] ?? 0);
+    $approvals = (int)($stats['approvals'] ?? 0);
+    // 投稿・写真・レビュー・承認・剥奪/分配の増減はポイント台帳の合計で持つ（付与も剥奪も履歴に残る）
+    $ledger   = (int)($stats['ledgerPoints'] ?? 0);
 
-    $points = $posts * PT_POST
-        + $photos * PT_PHOTO
+    // 台帳外の指標（確認/報告・自分の情報が確認された・鮮度維持）は従来どおり集計で加算
+    $points = $ledger
         + $votes * PT_VOTE
         + $recv * PT_CONFIRM_RECEIVED
         + $refreshes * PT_REFRESH_BONUS;
+    if ($points < 0) {
+        $points = 0; // 剥奪でマイナスになっても表示上は0止まり
+    }
 
     // 現在ランクと次ランク
     $current = RANKS[0];
@@ -54,6 +65,8 @@ function reputation(array $stats): array
         badge('five_posts',  '🏘️ 5件登録',          $posts >= 5),
         badge('photographer','📸 写真マスター',      $photos >= 10),
         badge('verifier',    '🔍 検証者',           $votes >= 20),
+        badge('reviewer',    '🕵️ 目利き（レビュー）', $reviews >= 10),
+        badge('approver',    '⚖️ 承認者',           $approvals >= 10),
         badge('freshkeeper', '🕒 鮮度キーパー',      $refreshes >= 3),
         badge('trusted',     '🤝 信頼される投稿者',  $recv >= 50),
     ];
@@ -71,7 +84,7 @@ function reputation(array $stats): array
         'stats'  => [
             'posts' => $posts, 'photoPosts' => $photos,
             'votes' => $votes, 'confirmsReceived' => $recv,
-            'refreshes' => $refreshes,
+            'refreshes' => $refreshes, 'reviews' => $reviews, 'approvals' => $approvals,
         ],
     ];
 }

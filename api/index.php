@@ -158,7 +158,7 @@ function decorate_lot(array $lot, float $hours): array
     $lot['lat'] = (float)$lot['lat'];
     $lot['lng'] = (float)$lot['lng'];
     // 内部トークンは外に出さない
-    unset($lot['created_by_token']);
+    unset($lot['created_by_token'], $lot['reviewer_token'], $lot['approver_token'], $lot['points_revoked']);
     return $lot;
 }
 
@@ -231,10 +231,11 @@ if ($route === '/lots' && $method === 'POST') {
         }
     }
     $data['created_by_token'] = $token;
+    $data['status'] = 'pending_review'; // 公開はレビュー→承認を経てから（ポイントは公開時に付与）
     $lot = $db->createLot($data);
     $stats = $db->getUserStats($token);
     $me = ['nickname' => $stats['nickname']] + reputation($stats);
-    json_out(['lot' => decorate_lot($lot, 1), 'me' => $me], 201);
+    json_out(['pending' => true, 'lot' => decorate_lot($lot, 1), 'me' => $me], 201);
 }
 
 // POST /api/lots/{id}  （編集。PHP は PUT+multipart で $_FILES が空になるため POST に統一）
@@ -342,6 +343,67 @@ if (preg_match('#^/lots/(\d+)/(confirm|report)$#', $route, $m) && $method === 'P
     json_out([
         'lot' => decorate_lot($result['lot'], 1),
         'me'  => ['nickname' => $stats['nickname']] + reputation($stats),
+    ]);
+}
+
+// GET /api/queue?type=review|approval  （審査待ち一覧。ログイン必須・自分の投稿は除外）
+if ($route === '/queue' && $method === 'GET') {
+    $token = require_login();
+    $type = ($_GET['type'] ?? 'review') === 'approval' ? 'approval' : 'review';
+    $items = array_map(fn($l) => decorate_lot($l, 1), $db->listQueue($type, $token, 50));
+    json_out(['type' => $type, 'items' => $items, 'counts' => $db->queueCounts($token)]);
+}
+
+// GET /api/queue/counts  （審査待ち件数。ボタンのバッジ用）
+if ($route === '/queue/counts' && $method === 'GET') {
+    $token = current_token();
+    if ($token === null) {
+        json_out(['counts' => ['review' => 0, 'approval' => 0]]);
+    }
+    json_out(['counts' => $db->queueCounts($token)]);
+}
+
+// POST /api/lots/{id}/review  {ok}  （レビュー: ok=trueで承認待ちへ / falseで却下）
+if (preg_match('#^/lots/(\d+)/review$#', $route, $m) && $method === 'POST') {
+    require_same_origin();
+    $token = require_login();
+    rate_guard($db, 'moderate', 20, 200);
+    $body = read_json_body();
+    $ok = !empty($body['ok']);
+    $res = $db->submitReview((int)$m[1], $token, $ok, PT_REVIEW);
+    if (!$res['ok'] && ($res['reason'] ?? '') === 'self') {
+        json_error('自分の投稿はレビューできません', 403);
+    }
+    if (!$res['ok']) {
+        json_error('この投稿はレビューできません（すでに処理済みの可能性）', 404);
+    }
+    $stats = $db->getUserStats($token);
+    json_out([
+        'reviewed' => true, 'result' => $ok ? 'to_approval' : 'rejected',
+        'me' => ['nickname' => $stats['nickname']] + reputation($stats),
+        'counts' => $db->queueCounts($token),
+    ]);
+}
+
+// POST /api/lots/{id}/publish  {ok}  （承認: ok=trueで公開 / falseはレビューが不適切→差し戻し）
+if (preg_match('#^/lots/(\d+)/publish$#', $route, $m) && $method === 'POST') {
+    require_same_origin();
+    $token = require_login();
+    rate_guard($db, 'moderate', 20, 200);
+    $body = read_json_body();
+    $ok = !empty($body['ok']);
+    $res = $db->approvePublish((int)$m[1], $token, $ok, PT_POST, PT_PHOTO, PT_APPROVE);
+    if (!$res['ok'] && in_array(($res['reason'] ?? ''), ['self', 'self_review'], true)) {
+        json_error('自分が関わった投稿は承認できません', 403);
+    }
+    if (!$res['ok']) {
+        json_error('この投稿は承認できません（すでに処理済みの可能性）', 404);
+    }
+    $stats = $db->getUserStats($token);
+    json_out([
+        'approved' => true, 'result' => $res['result'],
+        'me' => ['nickname' => $stats['nickname']] + reputation($stats),
+        'counts' => $db->queueCounts($token),
     ]);
 }
 

@@ -87,7 +87,13 @@ class DB
                 last_confirmed_at VARCHAR(30),
                 report_count      INT NOT NULL DEFAULT 0,
                 hidden            INT NOT NULL DEFAULT 0,
-                hidden_at         VARCHAR(30)
+                hidden_at         VARCHAR(30),
+                status            VARCHAR(16) NOT NULL DEFAULT 'published',
+                reviewer_token    VARCHAR(80),
+                approver_token    VARCHAR(80),
+                reviewed_at       VARCHAR(30),
+                approved_at       VARCHAR(30),
+                points_revoked    INT NOT NULL DEFAULT 0
             )$engine
         ");
 
@@ -161,6 +167,34 @@ class DB
                 UNIQUE (proposal_id, client_token)
             )$engine
         ");
+
+        // ポイント台帳（追記型・ブロックチェーン的）: 付与も剥奪も分配も履歴として積む。
+        // points は正負どちらも取る（剥奪は打ち消しの負の行を積む）。
+        // prev_hash/hash で各行を連結し、後からの改ざんを検知できるようにする。
+        $this->pdo->exec("
+            CREATE TABLE IF NOT EXISTS point_events (
+                id          $auto,
+                user_token  VARCHAR(80) NOT NULL,
+                lot_id      INT,
+                role        VARCHAR(24) NOT NULL,
+                points      INT NOT NULL,
+                note        VARCHAR(200),
+                prev_hash   VARCHAR(64),
+                hash        VARCHAR(64),
+                created_at  VARCHAR(30) NOT NULL
+            )$engine
+        ");
+
+        // レビュー/承認の投票（1アカウント1回・自作自演防止の補助）
+        $this->pdo->exec("
+            CREATE TABLE IF NOT EXISTS moderations (
+                id           $auto,
+                lot_id       INT NOT NULL,
+                client_token VARCHAR(80) NOT NULL,
+                kind         VARCHAR(10) NOT NULL,
+                created_at   VARCHAR(30) NOT NULL
+            )$engine
+        ");
         try {
             $sql = 'CREATE INDEX idx_rate_bucket ON rate_hits (bucket, created_at)';
             if ($this->driver === 'sqlite') {
@@ -186,6 +220,12 @@ class DB
             "ALTER TABLE lots ADD COLUMN kind VARCHAR(10) NOT NULL DEFAULT 'parking'",
             'ALTER TABLE lots ADD COLUMN hours VARCHAR(200)',
             'ALTER TABLE lots ADD COLUMN category VARCHAR(40)',
+            "ALTER TABLE lots ADD COLUMN status VARCHAR(16) NOT NULL DEFAULT 'published'",
+            'ALTER TABLE lots ADD COLUMN reviewer_token VARCHAR(80)',
+            'ALTER TABLE lots ADD COLUMN approver_token VARCHAR(80)',
+            'ALTER TABLE lots ADD COLUMN reviewed_at VARCHAR(30)',
+            'ALTER TABLE lots ADD COLUMN approved_at VARCHAR(30)',
+            'ALTER TABLE lots ADD COLUMN points_revoked INT NOT NULL DEFAULT 0',
         ] as $sql) {
             try {
                 $this->pdo->exec($sql);
@@ -203,8 +243,12 @@ class DB
         // インデックス（存在しても致命的でないよう try）
         foreach ([
             'CREATE INDEX idx_lots_latlng ON lots (lat, lng)',
+            'CREATE INDEX idx_lots_status ON lots (status)',
             'CREATE INDEX idx_reports_lot ON reports (lot_id)',
             'CREATE INDEX idx_proposals_lot ON proposals (lot_id, status)',
+            'CREATE INDEX idx_pe_user ON point_events (user_token)',
+            'CREATE INDEX idx_pe_lot ON point_events (lot_id)',
+            'CREATE INDEX idx_mod_lot ON moderations (lot_id, kind)',
         ] as $sql) {
             try {
                 if ($this->driver === 'sqlite') {
@@ -234,9 +278,11 @@ class DB
         $now = self::nowIso();
         $stmt = $this->pdo->prepare("
             INSERT INTO lots (kind, name, lat, lng, address, hourly_rate, max_rate, fee_note,
-                              capacity, hours, category, photo, nickname, source, rates, created_by_token, created_at, updated_at)
+                              capacity, hours, category, photo, nickname, source, rates, created_by_token,
+                              status, created_at, updated_at)
             VALUES (:kind, :name, :lat, :lng, :address, :hourly_rate, :max_rate, :fee_note,
-                    :capacity, :hours, :category, :photo, :nickname, :source, :rates, :created_by_token, :created_at, :updated_at)
+                    :capacity, :hours, :category, :photo, :nickname, :source, :rates, :created_by_token,
+                    :status, :created_at, :updated_at)
         ");
         $stmt->execute([
             ':kind' => $d['kind'] ?? 'parking',
@@ -249,6 +295,7 @@ class DB
             ':nickname' => $d['nickname'], ':source' => $d['source'] ?? 'user',
             ':rates' => $d['rates'] ?? null,
             ':created_by_token' => $d['created_by_token'] ?? null,
+            ':status' => $d['status'] ?? 'published',
             ':created_at' => $now, ':updated_at' => $now,
         ]);
         return $this->getLot((int)$this->pdo->lastInsertId());
@@ -268,7 +315,7 @@ class DB
         if ($bbox) {
             $stmt = $this->pdo->prepare("
                 SELECT * FROM lots
-                WHERE hidden = 0
+                WHERE hidden = 0 AND status = 'published'
                   AND lat BETWEEN :minLat AND :maxLat
                   AND lng BETWEEN :minLng AND :maxLng
             ");
@@ -278,7 +325,7 @@ class DB
             ]);
             return $stmt->fetchAll();
         }
-        return $this->pdo->query('SELECT * FROM lots WHERE hidden = 0')->fetchAll();
+        return $this->pdo->query("SELECT * FROM lots WHERE hidden = 0 AND status = 'published'")->fetchAll();
     }
 
     public function updateLot(int $id, array $d): array
@@ -425,6 +472,207 @@ class DB
             ->execute([self::nowIso(), (int)$p['id']]);
     }
 
+    // ---- ポイント台帳（追記型・ハッシュ連結） ----
+
+    private function lastLedgerHash(): ?string
+    {
+        $r = $this->pdo->query('SELECT hash FROM point_events ORDER BY id DESC LIMIT 1')->fetch();
+        return $r['hash'] ?? null;
+    }
+
+    /** 台帳に1行追記（付与も剥奪も分配もすべてここを通す）。前行ハッシュと連結して改ざん検知可能に。 */
+    public function appendPointEvent(string $token, ?int $lotId, string $role, int $points, ?string $note = null): void
+    {
+        $now = self::nowIso();
+        $prev = $this->lastLedgerHash();
+        $payload = ($prev ?? '') . '|' . $token . '|' . ($lotId ?? '') . '|' . $role . '|' . $points . '|' . $now;
+        $hash = hash('sha256', $payload);
+        $this->pdo->prepare(
+            'INSERT INTO point_events (user_token, lot_id, role, points, note, prev_hash, hash, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([$token, $lotId, $role, $points, $note, $prev, $hash, $now]);
+    }
+
+    /** そのユーザーが、その投稿で得た/失った純ポイント（剥奪額の算定に使う）。 */
+    public function lotUserNet(int $lotId, string $token): int
+    {
+        $st = $this->pdo->prepare('SELECT COALESCE(SUM(points),0) AS s FROM point_events WHERE lot_id = ? AND user_token = ?');
+        $st->execute([$lotId, $token]);
+        return (int)$st->fetch()['s'];
+    }
+
+    /** 台帳を先頭から検証。改ざんがあれば false（管理用）。 */
+    public function verifyLedger(): bool
+    {
+        $rows = $this->pdo->query('SELECT * FROM point_events ORDER BY id ASC')->fetchAll();
+        $prev = null;
+        foreach ($rows as $r) {
+            $payload = ($prev ?? '') . '|' . $r['user_token'] . '|' . ($r['lot_id'] ?? '') . '|' . $r['role'] . '|' . $r['points'] . '|' . $r['created_at'];
+            if (hash('sha256', $payload) !== $r['hash']) {
+                return false;
+            }
+            $prev = $r['hash'];
+        }
+        return true;
+    }
+
+    // ---- 新規投稿の審査（レビュー → 承認 → 公開） ----
+
+    /** レビュー待ちの投稿にレビューを付ける。ok=trueで承認待ちへ、falseで却下。 */
+    public function submitReview(int $lotId, string $token, bool $ok, int $reviewPts): array
+    {
+        $lot = $this->getLot($lotId);
+        if (!$lot || $lot['status'] !== 'pending_review') {
+            return ['ok' => false, 'reason' => 'notfound'];
+        }
+        if (($lot['created_by_token'] ?? '') === $token) {
+            return ['ok' => false, 'reason' => 'self']; // 自分の投稿はレビュー不可
+        }
+        $now = self::nowIso();
+        try {
+            $this->pdo->beginTransaction();
+            $this->pdo->prepare('INSERT INTO moderations (lot_id, client_token, kind, created_at) VALUES (?,?,?,?)')
+                ->execute([$lotId, $token, 'review', $now]);
+            if ($ok) {
+                $this->pdo->prepare("UPDATE lots SET status='pending_approval', reviewer_token=?, reviewed_at=? WHERE id=?")
+                    ->execute([$token, $now, $lotId]);
+                $this->appendPointEvent($token, $lotId, 'review', $reviewPts, 'レビュー');
+            } else {
+                $this->pdo->prepare("UPDATE lots SET status='rejected', reviewer_token=?, reviewed_at=? WHERE id=?")
+                    ->execute([$token, $now, $lotId]);
+            }
+            $this->pdo->commit();
+        } catch (PDOException $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+        return ['ok' => true, 'lot' => $this->getLot($lotId)];
+    }
+
+    /** 承認待ちの投稿を承認して公開。ok=falseはレビューが不適切→レビュー者のポイントを承認者へ移し差し戻し。 */
+    public function approvePublish(int $lotId, string $token, bool $ok, int $posterPts, int $photoPts, int $approvePts): array
+    {
+        $lot = $this->getLot($lotId);
+        if (!$lot || $lot['status'] !== 'pending_approval') {
+            return ['ok' => false, 'reason' => 'notfound'];
+        }
+        if (($lot['created_by_token'] ?? '') === $token) {
+            return ['ok' => false, 'reason' => 'self'];
+        }
+        if (($lot['reviewer_token'] ?? '') === $token) {
+            return ['ok' => false, 'reason' => 'self_review']; // レビュー者は承認できない
+        }
+        $now = self::nowIso();
+        try {
+            $this->pdo->beginTransaction();
+            $this->pdo->prepare('INSERT INTO moderations (lot_id, client_token, kind, created_at) VALUES (?,?,?,?)')
+                ->execute([$lotId, $token, 'approve', $now]);
+            if ($ok) {
+                $this->pdo->prepare("UPDATE lots SET status='published', approver_token=?, approved_at=?, updated_at=? WHERE id=?")
+                    ->execute([$token, $now, $now, $lotId]);
+                $poster = $lot['created_by_token'] ?? null;
+                if ($poster) {
+                    $this->appendPointEvent($poster, $lotId, 'post', $posterPts, '投稿が公開');
+                    if (!empty($lot['photo'])) {
+                        $this->appendPointEvent($poster, $lotId, 'photo', $photoPts, '写真つき投稿');
+                    }
+                }
+                $this->appendPointEvent($token, $lotId, 'approve', $approvePts, '承認');
+                $result = 'published';
+            } else {
+                // レビューが不適切 → レビュー者の当該ポイントを剥奪して承認者へ移動、再レビュー待ちへ差し戻し
+                $reviewer = $lot['reviewer_token'] ?? null;
+                if ($reviewer) {
+                    $moved = $this->lotUserNet($lotId, $reviewer);
+                    if ($moved > 0) {
+                        $this->appendPointEvent($reviewer, $lotId, 'revoke_review', -$moved, 'レビューが不適切と判断され剥奪');
+                        $this->appendPointEvent($token, $lotId, 'review_catch', $moved, '不適切なレビューを見抜いた');
+                    }
+                }
+                $this->pdo->prepare("UPDATE lots SET status='pending_review', reviewer_token=NULL, reviewed_at=NULL WHERE id=?")
+                    ->execute([$lotId]);
+                $result = 'sent_back';
+            }
+            $this->pdo->commit();
+        } catch (PDOException $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+        return ['ok' => true, 'result' => $result, 'lot' => $this->getLot($lotId)];
+    }
+
+    /** 審査待ちの一覧（自分の投稿は除外。承認待ちは自分がレビューしたものも除外）。 */
+    public function listQueue(string $type, string $excludeToken, int $limit = 50): array
+    {
+        $limit = max(1, min(100, $limit));
+        if ($type === 'approval') {
+            $st = $this->pdo->prepare(
+                "SELECT * FROM lots
+                 WHERE status='pending_approval' AND hidden=0
+                   AND (created_by_token IS NULL OR created_by_token <> ?)
+                   AND (reviewer_token IS NULL OR reviewer_token <> ?)
+                 ORDER BY id ASC LIMIT $limit"
+            );
+            $st->execute([$excludeToken, $excludeToken]);
+        } else {
+            $st = $this->pdo->prepare(
+                "SELECT * FROM lots
+                 WHERE status='pending_review' AND hidden=0
+                   AND (created_by_token IS NULL OR created_by_token <> ?)
+                 ORDER BY id ASC LIMIT $limit"
+            );
+            $st->execute([$excludeToken]);
+        }
+        return $st->fetchAll();
+    }
+
+    /** 審査待ち件数（ボタンのバッジ用）。 */
+    public function queueCounts(string $excludeToken): array
+    {
+        $r = $this->pdo->prepare("SELECT COUNT(*) AS c FROM lots WHERE status='pending_review' AND hidden=0 AND (created_by_token IS NULL OR created_by_token <> ?)");
+        $r->execute([$excludeToken]);
+        $a = $this->pdo->prepare("SELECT COUNT(*) AS c FROM lots WHERE status='pending_approval' AND hidden=0 AND (created_by_token IS NULL OR created_by_token <> ?) AND (reviewer_token IS NULL OR reviewer_token <> ?)");
+        $a->execute([$excludeToken, $excludeToken]);
+        return ['review' => (int)$r->fetch()['c'], 'approval' => (int)$a->fetch()['c']];
+    }
+
+    /** 公開後に不適切指摘が集まったとき、関係者のポイントを剥奪し指摘者へ分配（1回のみ）。 */
+    private function revokeInappropriate(int $lotId, array $lot): void
+    {
+        $targets = array_values(array_unique(array_filter([
+            $lot['created_by_token'] ?? null,
+            $lot['reviewer_token'] ?? null,
+            $lot['approver_token'] ?? null,
+        ])));
+        $total = 0;
+        foreach ($targets as $t) {
+            $net = $this->lotUserNet($lotId, $t); // この投稿で得た分のみ
+            if ($net > 0) {
+                $this->appendPointEvent($t, $lotId, 'revoke_inappropriate', -$net, '公開後に不適切と判断され剥奪');
+                $total += $net;
+            }
+        }
+        $rs = $this->pdo->prepare("SELECT DISTINCT client_token FROM reports WHERE lot_id=? AND kind='report' AND comment='inappropriate'");
+        $rs->execute([$lotId]);
+        $reporters = array_column($rs->fetchAll(), 'client_token');
+        $n = count($reporters);
+        if ($n > 0 && $total > 0) {
+            $each = intdiv($total, $n);
+            $rem  = $total - $each * $n; // 余りは先頭から1ずつ配って総量を保存
+            foreach ($reporters as $i => $t) {
+                $pts = $each + ($i < $rem ? 1 : 0);
+                if ($pts > 0) {
+                    $this->appendPointEvent($t, $lotId, 'report_reward', $pts, '不適切の指摘への分配');
+                }
+            }
+        }
+        $this->pdo->prepare('UPDATE lots SET points_revoked=1 WHERE id=?')->execute([$lotId]);
+    }
+
     // ---- reports (confirm / report) ----
 
     /**
@@ -470,6 +718,10 @@ class DB
                     if ((int)$ic->fetch()['c'] >= self::HIDE_INAPPROPRIATE) {
                         $this->pdo->prepare('UPDATE lots SET hidden = 1, hidden_at = ? WHERE id = ? AND hidden = 0')
                             ->execute([$now, $lotId]);
+                        // 10人以上が不適切と指摘 → 投稿者・レビュー者・承認者のポイントを剥奪して指摘者へ分配（1回のみ）
+                        if ((int)($lot['points_revoked'] ?? 0) === 0) {
+                            $this->revokeInappropriate($lotId, $lot);
+                        }
                     }
                 }
             }
@@ -739,13 +991,22 @@ class DB
             $nickname = ($u->fetch()['nickname'] ?? null);
         }
 
+        // ポイント台帳の合計（付与−剥奪）
+        $lp = $this->pdo->prepare('SELECT COALESCE(SUM(points),0) AS c FROM point_events WHERE user_token = ?');
+        $lp->execute([$token]);
+        $ledgerPoints = (int)$lp->fetch()['c'];
+
         return [
             'nickname'         => $nickname,
-            'posts'            => $one('SELECT COUNT(*) AS c FROM lots WHERE created_by_token = ?', [$token]),
-            'photoPosts'       => $one("SELECT COUNT(*) AS c FROM lots WHERE created_by_token = ? AND photo IS NOT NULL AND photo <> ''", [$token]),
+            // 投稿系は「公開済み」だけをバッジ対象にする
+            'posts'            => $one("SELECT COUNT(*) AS c FROM lots WHERE created_by_token = ? AND status = 'published'", [$token]),
+            'photoPosts'       => $one("SELECT COUNT(*) AS c FROM lots WHERE created_by_token = ? AND status = 'published' AND photo IS NOT NULL AND photo <> ''", [$token]),
             'votes'            => $one('SELECT COUNT(*) AS c FROM reports WHERE client_token = ?', [$token]),
-            'confirmsReceived' => $one('SELECT COALESCE(SUM(confirm_count),0) AS c FROM lots WHERE created_by_token = ?', [$token]),
+            'confirmsReceived' => $one("SELECT COALESCE(SUM(confirm_count),0) AS c FROM lots WHERE created_by_token = ? AND status = 'published'", [$token]),
             'refreshes'        => $one("SELECT COUNT(*) AS c FROM reports WHERE client_token = ? AND kind = 'confirm' AND was_stale = 1", [$token]),
+            'reviews'          => $one("SELECT COUNT(*) AS c FROM moderations WHERE client_token = ? AND kind = 'review'", [$token]),
+            'approvals'        => $one("SELECT COUNT(*) AS c FROM moderations WHERE client_token = ? AND kind = 'approve'", [$token]),
+            'ledgerPoints'     => $ledgerPoints,
         ];
     }
 
