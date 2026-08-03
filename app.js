@@ -523,18 +523,27 @@ function locate(options = {}) {
     }
     if (!options.initial) toast('現在地を取得中…');
     let done = false;
-    let best = null;       // 最も精度の良い測位結果を採用
-    let recentered = false; // この呼び出しで一度だけ地図を移動＆ソート切替
+    let best = null;        // 最も精度の良い測位結果を採用
+    let firstApplied = false;
     let watchId = null;
-    const apply = () => {
-      applyUserPos(best, options, !recentered);
-      recentered = true;
+    // 取得中にユーザーが地図を動かしたら、以降は勝手に地図を寄せない（追従を止める）
+    let userMoved = false;
+    const onDrag = () => { userMoved = true; };
+    map.on('dragstart', onDrag);
+
+    // 精度が上がるたびに地図も最良位置へ寄せる（初回の粗い位置に固定しない）。
+    // ただし手動で地図を動かした後は中心移動しない。
+    const apply = (improved) => {
+      const recenter = !userMoved && (!firstApplied || improved);
+      applyUserPos(best, options, recenter);
+      firstApplied = true;
     };
     const finish = () => {
       if (done) return;
       done = true;
       if (watchId != null) navigator.geolocation.clearWatch(watchId);
-      if (best) { apply(); resolve(true); }
+      map.off('dragstart', onDrag);
+      if (best) { apply(true); resolve(true); }
       else {
         if (!options.initial) toast('現在地を取得できませんでした（位置情報の許可を確認してください）');
         resolve(false);
@@ -543,14 +552,14 @@ function locate(options = {}) {
     // watchPosition で数回受信し、accuracy が最も良いものを使う（初回のブレを軽減）
     watchId = navigator.geolocation.watchPosition(
       (pos) => {
-        if (!best || pos.coords.accuracy < best.coords.accuracy) best = pos;
-        apply();                                  // 逐次反映（だんだん正確になる）
-        if (best.coords.accuracy <= 30) finish(); // 十分な精度で確定
+        const improved = !best || pos.coords.accuracy < best.coords.accuracy;
+        if (improved) { best = pos; apply(true); } // 良い測位が来たときだけ更新＆追従
+        if (best.coords.accuracy <= 25) finish();   // 十分な精度で確定
       },
       () => { if (!best) finish(); },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
     );
-    setTimeout(finish, 8000); // 最長8秒でその時点のベストに確定
+    setTimeout(finish, 12000); // 最長12秒でその時点のベストに確定（GPS昇温の余裕）
   });
 }
 
