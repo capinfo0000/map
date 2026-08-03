@@ -772,6 +772,23 @@ class DB
         return (int)$this->pdo->query('SELECT COUNT(*) AS c FROM lots')->fetch()['c'];
     }
 
+    /** 公開中の駐車場・店を名前/住所で検索。@return array<int,array> */
+    public function searchLots(string $q, int $limit = 20): array
+    {
+        $limit = max(1, min(50, $limit));
+        // LIKE のワイルドカードをエスケープ（部分一致検索）
+        $esc = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q);
+        $like = '%' . $esc . '%';
+        $st = $this->pdo->prepare(
+            "SELECT id, kind, name, address, lat, lng FROM lots
+             WHERE hidden = 0 AND status = 'published'
+               AND (name LIKE :q ESCAPE '\\' OR address LIKE :q ESCAPE '\\')
+             ORDER BY id DESC LIMIT $limit"
+        );
+        $st->execute([':q' => $like]);
+        return $st->fetchAll();
+    }
+
     /**
      * その投稿の投票内訳（1アカウント1票）。件数と「最後に押された日時」を返す。
      * @return array 例: {confirm:29, confirm_at:'...', wrong:1, wrong_at:'...', closed:9, ..., inappropriate:4, ...}

@@ -444,6 +444,24 @@ if (preg_match('#^/proposals/(\d+)/approve$#', $route, $m) && $method === 'POST'
     json_out($out);
 }
 
+// GET /api/search?q=...  （登録済みの駐車場・店を名前/住所で検索）
+if ($route === '/search' && $method === 'GET') {
+    $q = trim((string)($_GET['q'] ?? ''));
+    if (mb_strlen($q) < 1) {
+        json_out(['results' => []]);
+    }
+    $rows = $db->searchLots(mb_substr($q, 0, 80), 20);
+    $results = array_map(fn($r) => [
+        'id'      => (int)$r['id'],
+        'kind'    => $r['kind'] === 'shop' ? 'shop' : 'parking',
+        'name'    => $r['name'],
+        'address' => $r['address'],
+        'lat'     => (float)$r['lat'],
+        'lng'     => (float)$r['lng'],
+    ], $rows);
+    json_out(['results' => $results]);
+}
+
 // GET /api/places-nearby?bbox=minLng,minLat,maxLng,maxLat  （地図上の店：OSM店POI・サーバーキャッシュ）
 if ($route === '/places-nearby' && $method === 'GET') {
     $bbox = parse_bbox($_GET['bbox'] ?? null);

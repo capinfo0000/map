@@ -92,8 +92,23 @@ button { font-family: inherit; cursor: pointer; }
 .segmented button.active { background: #fff; color: var(--brand); box-shadow: var(--shadow); }
 
 /* ---- layout ---- */
-.layout { flex: 1; display: flex; min-height: 0; }
+.layout { flex: 1; display: flex; min-height: 0; position: relative; }
 #map { flex: 1; min-height: 0; z-index: 1; }
+
+/* 店名・住所検索（地図の上に浮かせる） */
+.search-box { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 600; width: min(92%, 420px); }
+.search-row { display: flex; gap: 6px; background: #fff; border-radius: 999px; box-shadow: var(--shadow); padding: 4px 4px 4px 14px; }
+.search-row input { flex: 1; border: none; outline: none; font-size: 14px; background: transparent; }
+.search-btn { border: none; background: var(--brand); color: #fff; border-radius: 999px; width: 38px; height: 38px; font-size: 16px; cursor: pointer; flex-shrink: 0; }
+.search-results { margin-top: 6px; background: #fff; border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; max-height: 60vh; overflow-y: auto; }
+.sr-group { font-size: 11px; color: var(--muted); padding: 8px 12px 4px; font-weight: 700; }
+.sr-item { display: flex; gap: 8px; align-items: flex-start; padding: 9px 12px; cursor: pointer; border-top: 1px solid var(--line); }
+.sr-item:hover { background: #f3f7ff; }
+.sr-icon { flex-shrink: 0; }
+.sr-body { min-width: 0; }
+.sr-name { font-size: 14px; color: var(--ink); font-weight: 600; }
+.sr-addr { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.sr-loading, .sr-empty { padding: 12px; font-size: 13px; color: var(--muted); text-align: center; }
 .list-panel {
   width: 340px; background: var(--panel); border-left: 1px solid var(--line);
   display: flex; flex-direction: column; min-height: 0;

@@ -732,6 +732,61 @@ async function approveEdit(pid, lotId) {
   }
 }
 
+// ---- 検索（店名・住所） ----
+async function runSearch(q) {
+  q = (q || '').trim();
+  const box = $('#search-results');
+  if (!q) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  box.classList.remove('hidden');
+  box.innerHTML = '<div class="sr-loading">検索中…</div>';
+  let mine = [];
+  // 1) 登録済みの駐車場・店（自分たちのデータ）→ まず即表示
+  try {
+    const r = await fetch('/api/search?q=' + encodeURIComponent(q));
+    if (r.ok) mine = (await r.json()).results || [];
+  } catch (e) { /* noop */ }
+  renderSearchResults(mine, []);
+  // 2) 地図上の場所・住所（無料の OpenStreetMap Nominatim）→ タイムアウト付きで後追い
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 6000);
+    const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5'
+      + '&accept-language=ja&countrycodes=jp&q=' + encodeURIComponent(q);
+    const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: ctrl.signal });
+    clearTimeout(t);
+    if (r.ok) renderSearchResults(mine, await r.json());
+  } catch (e) { /* Nominatim不通でも登録データは表示済み */ }
+}
+
+function renderSearchResults(mine, places) {
+  const box = $('#search-results');
+  let html = '';
+  if (mine.length) {
+    html += '<div class="sr-group">登録済みの場所</div>';
+    html += mine.map((m) => `
+      <div class="sr-item" data-lat="${m.lat}" data-lng="${m.lng}" data-id="${m.id}">
+        <span class="sr-icon">${m.kind === 'shop' ? '🏬' : '🅿️'}</span>
+        <div class="sr-body">
+          <div class="sr-name">${escapeHtml(m.name)}</div>
+          ${m.address ? `<div class="sr-addr">${escapeHtml(m.address)}</div>` : ''}
+        </div>
+      </div>`).join('');
+  }
+  if (places.length) {
+    html += '<div class="sr-group">地図上の場所・住所</div>';
+    html += places.map((p) => `
+      <div class="sr-item" data-lat="${p.lat}" data-lng="${p.lon}">
+        <span class="sr-icon">📍</span>
+        <div class="sr-body">
+          <div class="sr-name">${escapeHtml((p.display_name || '').split(',')[0])}</div>
+          <div class="sr-addr">${escapeHtml(p.display_name || '')}</div>
+        </div>
+      </div>`).join('');
+  }
+  box.innerHTML = html || '<div class="sr-empty">見つかりませんでした</div>';
+  box.classList.remove('hidden');
+}
+
 // ---- 貢献ランク（reputation） ----
 async function fetchMe() {
   try {
@@ -1365,6 +1420,24 @@ $('#btn-add').addEventListener('click', () => { if (ensureLoggedIn()) startAddMo
 $('#btn-add-shop').addEventListener('click', () => { if (ensureLoggedIn()) startAddMode('shop'); });
 $('#btn-queue').addEventListener('click', openQueue);
 $('#queue-close').addEventListener('click', closeQueue);
+
+// 検索
+$('#search-form').addEventListener('submit', (e) => { e.preventDefault(); runSearch($('#search-input').value); });
+$('#search-results').addEventListener('click', async (e) => {
+  const item = e.target.closest('.sr-item');
+  if (!item) return;
+  const lat = Number(item.dataset.lat), lng = Number(item.dataset.lng);
+  const id = item.dataset.id ? Number(item.dataset.id) : null;
+  $('#search-results').classList.add('hidden');
+  if (!isFinite(lat) || !isFinite(lng)) return;
+  map.setView([lat, lng], 17);
+  await loadLots();
+  if (id) { const m = state.markers.get(id); if (m) m.openPopup(); }
+});
+// 検索ボックスの外をタップしたら結果を閉じる
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#search')) $('#search-results').classList.add('hidden');
+});
 $('#queue').addEventListener('click', (e) => {
   const tab = e.target.closest('.queue-tab');
   if (tab) { loadQueue(tab.dataset.qtab); return; }
