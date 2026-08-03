@@ -231,7 +231,7 @@ if ($route === '/lots' && $method === 'POST') {
         }
     }
     $data['created_by_token'] = $token;
-    $data['status'] = 'pending_review'; // 公開はレビュー→承認を経てから（ポイントは公開時に付与）
+    $data['status'] = 'pending_approval'; // 新規は緩く: 誰か1人の承認で公開（ポイントは公開時に付与）
     $lot = $db->createLot($data);
     $stats = $db->getUserStats($token);
     $me = ['nickname' => $stats['nickname']] + reputation($stats);
@@ -258,25 +258,33 @@ if (preg_match('#^/lots/(\d+)$#', $route, $m) && $method === 'POST') {
         json_error($photo['error'], 400);
     }
     $data = $parsed['data'];
+    $token = current_token();
     $isShop = ($existing['kind'] ?? 'parking') === 'shop';
-    // 「確定済み(赤ピン=source:user)」の店への編集だけ承認制にする。
-    // グレー(未編集/OSM由来)の店の初回編集は即時反映（グレー→赤）。
-    $isEstablishedShop = $isShop && (($existing['source'] ?? '') === 'user');
 
-    // ---- 確定済みの店（赤）の編集は「提案」として保留し、10承認で確定 ----
-    if ($isEstablishedShop) {
-        $token = current_token();
+    // ---- 編集は厳しく: 公開済みの情報への編集は「提案」として保留し、10承認で確定 ----
+    // 承認までは今の情報（旧写真）が表示され続け、承認画面では旧・新の2枚を見比べられる。
+    if (($existing['status'] ?? 'published') === 'published') {
         $payload = [
             'name'     => $data['name'],
             'lat'      => $data['lat'],
             'lng'      => $data['lng'],
             'address'  => $data['address'],
-            'hours'    => $data['hours'],
-            'category' => $data['category'],
             'fee_note' => $data['fee_note'],
         ];
+        if ($isShop) {
+            $payload['hours'] = $data['hours'];
+            $payload['category'] = $data['category'];
+        } else {
+            $payload['capacity'] = $data['capacity'];
+            $rates = process_rates($_POST['rates'] ?? null);
+            if ($rates['json'] !== null) {
+                $payload['rates']       = $rates['json'];
+                $payload['hourly_rate'] = $rates['derived']['hourly_rate'];
+                $payload['max_rate']    = $rates['derived']['max_rate'];
+            }
+        }
         if (!empty($photo['filename'])) {
-            $payload['photo'] = $photo['filename']; // 承認確定時に差し替え
+            $payload['photo'] = $photo['filename']; // 承認確定時に差し替え（それまで新旧2枚が並ぶ）
         }
         $proposal = $db->createProposal($id, $token, $payload);
         json_out([
@@ -286,32 +294,18 @@ if (preg_match('#^/lots/(\d+)$#', $route, $m) && $method === 'POST') {
         ], 202);
     }
 
-    // ---- グレー(未確定)の店の編集は即時反映（グレー→赤）。写真任意・料金なし ----
-    if ($isShop) {
-        $data['photo'] = $photo['filename']; // null なら維持
-        $data['source'] = 'user';
-        $lot = $db->updateLot($id, $data);
-        if ($photo['filename'] && $existing['photo'] && $existing['photo'] !== $lot['photo']) {
-            @unlink($UPLOAD_DIR . '/' . $existing['photo']);
+    // ---- 公開前(承認待ち等)の情報は提案にせず、そのまま更新（実質発生しない保険）----
+    $data['photo'] = $photo['filename'];
+    $data['source'] = 'user';
+    if (!$isShop) {
+        $rates = process_rates($_POST['rates'] ?? null);
+        $data['rates'] = $rates['json'];
+        if ($rates['json'] !== null) {
+            $data['hourly_rate'] = $rates['derived']['hourly_rate'];
+            $data['max_rate']    = $rates['derived']['max_rate'];
         }
-        json_out(['lot' => decorate_lot($lot, 1)]);
-    }
-
-    // ---- 駐車場（parking）は従来どおり即時反映 ----
-    // 編集でも写真は必須。新しい写真が無く、既存写真も無ければ拒否
-    if (empty($photo['filename']) && empty($existing['photo'])) {
-        json_error('料金看板の写真を添付してください（写真は必須です）', 400);
-    }
-    $data['photo'] = $photo['filename']; // null なら維持（db 側で COALESCE）
-    $data['source'] = 'user'; // 上書き編集された情報はユーザー情報扱い（地図で赤ピン）
-    $rates = process_rates($_POST['rates'] ?? null);
-    $data['rates'] = $rates['json'];
-    if ($rates['json'] !== null) {
-        $data['hourly_rate'] = $rates['derived']['hourly_rate'];
-        $data['max_rate']    = $rates['derived']['max_rate'];
     }
     $lot = $db->updateLot($id, $data);
-    // 写真差し替え時は旧写真を削除
     if ($photo['filename'] && $existing['photo'] && $existing['photo'] !== $lot['photo']) {
         @unlink($UPLOAD_DIR . '/' . $existing['photo']);
     }
@@ -346,11 +340,21 @@ if (preg_match('#^/lots/(\d+)/(confirm|report)$#', $route, $m) && $method === 'P
     ]);
 }
 
-// GET /api/queue?type=review|approval  （審査待ち一覧。ログイン必須・自分の投稿は除外）
+// GET /api/queue?type=new|edit  （審査待ち一覧。ログイン必須・自分が関与したものは除外）
 if ($route === '/queue' && $method === 'GET') {
     $token = require_login();
-    $type = ($_GET['type'] ?? 'review') === 'approval' ? 'approval' : 'review';
-    $items = array_map(fn($l) => decorate_lot($l, 1), $db->listQueue($type, $token, 50));
+    $type = ($_GET['type'] ?? 'new') === 'edit' ? 'edit' : 'new';
+    if ($type === 'edit') {
+        // 編集の承認待ち: 現状(lot)と提案(payload)の両方を返す（新旧2枚を見比べるため）
+        $items = array_map(function ($row) {
+            return [
+                'lot'      => decorate_lot($row['lot'], 1),
+                'proposal' => $row['proposal'],
+            ];
+        }, $db->listEditQueue($token, 50));
+    } else {
+        $items = array_map(fn($l) => decorate_lot($l, 1), $db->listQueue('new', $token, 50));
+    }
     json_out(['type' => $type, 'items' => $items, 'counts' => $db->queueCounts($token)]);
 }
 
@@ -358,34 +362,12 @@ if ($route === '/queue' && $method === 'GET') {
 if ($route === '/queue/counts' && $method === 'GET') {
     $token = current_token();
     if ($token === null) {
-        json_out(['counts' => ['review' => 0, 'approval' => 0]]);
+        json_out(['counts' => ['new' => 0, 'edit' => 0]]);
     }
     json_out(['counts' => $db->queueCounts($token)]);
 }
 
-// POST /api/lots/{id}/review  {ok}  （レビュー: ok=trueで承認待ちへ / falseで却下）
-if (preg_match('#^/lots/(\d+)/review$#', $route, $m) && $method === 'POST') {
-    require_same_origin();
-    $token = require_login();
-    rate_guard($db, 'moderate', 20, 200);
-    $body = read_json_body();
-    $ok = !empty($body['ok']);
-    $res = $db->submitReview((int)$m[1], $token, $ok, PT_REVIEW);
-    if (!$res['ok'] && ($res['reason'] ?? '') === 'self') {
-        json_error('自分の投稿はレビューできません', 403);
-    }
-    if (!$res['ok']) {
-        json_error('この投稿はレビューできません（すでに処理済みの可能性）', 404);
-    }
-    $stats = $db->getUserStats($token);
-    json_out([
-        'reviewed' => true, 'result' => $ok ? 'to_approval' : 'rejected',
-        'me' => ['nickname' => $stats['nickname']] + reputation($stats),
-        'counts' => $db->queueCounts($token),
-    ]);
-}
-
-// POST /api/lots/{id}/publish  {ok}  （承認: ok=trueで公開 / falseはレビューが不適切→差し戻し）
+// POST /api/lots/{id}/publish  {ok}  （新規の承認: ok=trueで公開 / falseで却下。1人でOK＝緩く）
 if (preg_match('#^/lots/(\d+)/publish$#', $route, $m) && $method === 'POST') {
     require_same_origin();
     $token = require_login();
@@ -393,8 +375,8 @@ if (preg_match('#^/lots/(\d+)/publish$#', $route, $m) && $method === 'POST') {
     $body = read_json_body();
     $ok = !empty($body['ok']);
     $res = $db->approvePublish((int)$m[1], $token, $ok, PT_POST, PT_PHOTO, PT_APPROVE);
-    if (!$res['ok'] && in_array(($res['reason'] ?? ''), ['self', 'self_review'], true)) {
-        json_error('自分が関わった投稿は承認できません', 403);
+    if (!$res['ok'] && ($res['reason'] ?? '') === 'self') {
+        json_error('自分の投稿は承認できません', 403);
     }
     if (!$res['ok']) {
         json_error('この投稿は承認できません（すでに処理済みの可能性）', 404);
@@ -428,18 +410,28 @@ if (preg_match('#^/proposals/(\d+)/approve$#', $route, $m) && $method === 'POST'
     $token = require_login(); // 承認もログイン必須。1アカウント1票
     rate_guard($db, 'vote', 20, 200);
     $id = (int)$m[1];
-    $res = $db->approveProposal($id, $token);
+    $res = $db->approveProposal($id, $token, PT_APPROVE_EDIT, PT_EDIT_APPLIED);
+    if (!$res['ok'] && ($res['reason'] ?? '') === 'self') {
+        json_error('自分が提案した編集は承認できません', 403);
+    }
     if (!$res['ok'] && ($res['reason'] ?? '') === 'notfound') {
         json_error('この編集提案は見つからないか、すでに確定/取り下げされています', 404);
     }
     if (!$res['ok'] && ($res['reason'] ?? '') === 'duplicate') {
         json_error('すでに承認済みです', 409);
     }
+    // 確定して写真が差し替わった場合、旧写真ファイルを削除
+    if ($res['applied'] && !empty($res['oldPhoto'])) {
+        @unlink($UPLOAD_DIR . '/' . $res['oldPhoto']);
+    }
+    $stats = $db->getUserStats($token);
     $out = [
         'approved'        => true,
         'applied'         => $res['applied'],
         'approve_count'   => (int)$res['proposal']['approve_count'],
         'approves_needed' => (int)$res['proposal']['approves_needed'],
+        'me'              => ['nickname' => $stats['nickname']] + reputation($stats),
+        'counts'          => $db->queueCounts($token),
     ];
     if ($res['applied'] && !empty($res['lot'])) {
         $out['lot'] = decorate_lot($res['lot'], 1);

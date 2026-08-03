@@ -11,8 +11,10 @@
 //   記録される。ここでの投稿ポイントは台帳合計(ledgerPoints)として合算される。
 const PT_POST            = 5; // 投稿（公開確定時に投稿者へ）＝一番多い
 const PT_PHOTO           = 3; // 写真つき投稿の加算（投稿者へ）
-const PT_REVIEW          = 1; // レビュー（レビュー者へ）
-const PT_APPROVE         = 2; // 承認（承認者へ）
+const PT_REVIEW          = 1; // （旧）レビュー
+const PT_APPROVE         = 2; // 新規投稿の承認（承認者へ）
+const PT_APPROVE_EDIT    = 1; // 編集提案の承認1回（承認者へ）
+const PT_EDIT_APPLIED    = 2; // 編集が確定した（提案者へ）
 const PT_VOTE            = 1; // 確認/報告を1回
 const PT_CONFIRM_RECEIVED = 2; // 自分の情報が1回確認された
 const PT_REFRESH_BONUS   = 2; // 「要更新」の情報を再確認して鮮度を保った（確認ポイントに加算）

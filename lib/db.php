@@ -407,16 +407,20 @@ class DB
     }
 
     /**
-     * 提案を承認（1アカウント1票）。しきい値に達したら本体へ反映して applied に。
-     * @return array{ok:bool, reason?:string, applied?:bool, proposal?:array, lot?:array}
+     * 編集提案を承認（1アカウント1票）。承認者に +approvePts。しきい値で本体へ反映＆提案者に +proposerPts。
+     * @return array{ok:bool, reason?:string, applied?:bool, oldPhoto?:?string, proposal?:array, lot?:array}
      */
-    public function approveProposal(int $proposalId, string $token): array
+    public function approveProposal(int $proposalId, string $token, int $approvePts = 0, int $proposerPts = 0): array
     {
         $now = self::nowIso();
         $p = $this->getProposal($proposalId);
         if (!$p || $p['status'] !== 'pending') {
             return ['ok' => false, 'reason' => 'notfound'];
         }
+        if (($p['proposer_token'] ?? '') === $token) {
+            return ['ok' => false, 'reason' => 'self']; // 自分の編集提案は承認できない
+        }
+        $oldPhoto = null;
         try {
             $this->pdo->beginTransaction();
             // 1アカウント1票（UNIQUE 違反で重複を検知）
@@ -426,6 +430,16 @@ class DB
             $this->pdo->prepare(
                 'UPDATE proposals SET approve_count = approve_count + 1, updated_at = ? WHERE id = ?'
             )->execute([$now, $proposalId]);
+            $lotId = (int)$p['lot_id'];
+            if ($approvePts > 0) {
+                $this->appendPointEvent($token, $lotId, 'edit_approve', $approvePts, '編集を承認');
+            }
+            $fresh = $this->getProposal($proposalId);
+            $applied = false;
+            if ((int)$fresh['approve_count'] >= self::APPROVE_THRESHOLD) {
+                $oldPhoto = $this->applyProposal($fresh, $proposerPts);
+                $applied = true;
+            }
             $this->pdo->commit();
         } catch (PDOException $e) {
             if ($this->pdo->inTransaction()) {
@@ -436,26 +450,21 @@ class DB
             }
             throw $e;
         }
-
         $p = $this->getProposal($proposalId);
-        $applied = false;
-        if ((int)$p['approve_count'] >= self::APPROVE_THRESHOLD) {
-            $this->applyProposal($p);
-            $applied = true;
-            $p = $this->getProposal($proposalId);
-        }
-        return ['ok' => true, 'applied' => $applied, 'proposal' => $p, 'lot' => $this->getLot((int)$p['lot_id'])];
+        return ['ok' => true, 'applied' => $applied, 'oldPhoto' => $oldPhoto,
+                'proposal' => $p, 'lot' => $this->getLot((int)$p['lot_id'])];
     }
 
-    /** 提案 payload を lot へ反映し、提案を applied に。 */
-    private function applyProposal(array $p): void
+    /** 提案 payload を lot へ反映し、提案を applied に。提案者へ +proposerPts。差し替え前の旧写真名を返す。 */
+    private function applyProposal(array $p, int $proposerPts = 0): ?string
     {
         $lot = $this->getLot((int)$p['lot_id']);
         if (!$lot) {
-            return;
+            return null;
         }
         $pl = $p['payload'];
-        // 反映を許可するフィールドのみマージ（安全のためホワイトリスト）
+        $oldPhoto = (!empty($pl['photo']) && !empty($lot['photo']) && $pl['photo'] !== $lot['photo'])
+            ? $lot['photo'] : null; // 新写真で差し替わる場合のみ旧写真を削除対象に
         $fields = ['name', 'lat', 'lng', 'address', 'hourly_rate', 'max_rate',
                    'fee_note', 'capacity', 'hours', 'category', 'rates', 'photo'];
         $merged = $lot;
@@ -465,11 +474,15 @@ class DB
             }
         }
         $merged['nickname'] = $lot['nickname'];
-        $merged['source'] = 'user'; // 承認で確定した編集は user（赤ピン）
+        $merged['source'] = 'user';
         $merged['photo'] = array_key_exists('photo', $pl) ? $pl['photo'] : null; // null は COALESCE で現状維持
         $this->updateLot((int)$p['lot_id'], $merged);
         $this->pdo->prepare("UPDATE proposals SET status = 'applied', updated_at = ? WHERE id = ?")
             ->execute([self::nowIso(), (int)$p['id']]);
+        if ($proposerPts > 0 && !empty($p['proposer_token'])) {
+            $this->appendPointEvent($p['proposer_token'], (int)$p['lot_id'], 'edit_applied', $proposerPts, '編集が承認され確定');
+        }
+        return $oldPhoto;
     }
 
     // ---- ポイント台帳（追記型・ハッシュ連結） ----
@@ -551,7 +564,7 @@ class DB
         return ['ok' => true, 'lot' => $this->getLot($lotId)];
     }
 
-    /** 承認待ちの投稿を承認して公開。ok=falseはレビューが不適切→レビュー者のポイントを承認者へ移し差し戻し。 */
+    /** 新規投稿を承認して公開（1人でOK＝緩く）。ok=falseは却下。投稿者と承認者にポイント付与。 */
     public function approvePublish(int $lotId, string $token, bool $ok, int $posterPts, int $photoPts, int $approvePts): array
     {
         $lot = $this->getLot($lotId);
@@ -559,10 +572,7 @@ class DB
             return ['ok' => false, 'reason' => 'notfound'];
         }
         if (($lot['created_by_token'] ?? '') === $token) {
-            return ['ok' => false, 'reason' => 'self'];
-        }
-        if (($lot['reviewer_token'] ?? '') === $token) {
-            return ['ok' => false, 'reason' => 'self_review']; // レビュー者は承認できない
+            return ['ok' => false, 'reason' => 'self']; // 自分の投稿は承認できない
         }
         $now = self::nowIso();
         try {
@@ -579,21 +589,11 @@ class DB
                         $this->appendPointEvent($poster, $lotId, 'photo', $photoPts, '写真つき投稿');
                     }
                 }
-                $this->appendPointEvent($token, $lotId, 'approve', $approvePts, '承認');
+                $this->appendPointEvent($token, $lotId, 'approve', $approvePts, '新規を承認');
                 $result = 'published';
             } else {
-                // レビューが不適切 → レビュー者の当該ポイントを剥奪して承認者へ移動、再レビュー待ちへ差し戻し
-                $reviewer = $lot['reviewer_token'] ?? null;
-                if ($reviewer) {
-                    $moved = $this->lotUserNet($lotId, $reviewer);
-                    if ($moved > 0) {
-                        $this->appendPointEvent($reviewer, $lotId, 'revoke_review', -$moved, 'レビューが不適切と判断され剥奪');
-                        $this->appendPointEvent($token, $lotId, 'review_catch', $moved, '不適切なレビューを見抜いた');
-                    }
-                }
-                $this->pdo->prepare("UPDATE lots SET status='pending_review', reviewer_token=NULL, reviewed_at=NULL WHERE id=?")
-                    ->execute([$lotId]);
-                $result = 'sent_back';
+                $this->pdo->prepare("UPDATE lots SET status='rejected' WHERE id=?")->execute([$lotId]);
+                $result = 'rejected';
             }
             $this->pdo->commit();
         } catch (PDOException $e) {
@@ -605,54 +605,74 @@ class DB
         return ['ok' => true, 'result' => $result, 'lot' => $this->getLot($lotId)];
     }
 
-    /** 審査待ちの一覧（自分の投稿は除外。承認待ちは自分がレビューしたものも除外）。 */
+    /** 新規の公開待ち一覧（自分の投稿は除外）。 */
     public function listQueue(string $type, string $excludeToken, int $limit = 50): array
     {
         $limit = max(1, min(100, $limit));
-        if ($type === 'approval') {
-            $st = $this->pdo->prepare(
-                "SELECT * FROM lots
-                 WHERE status='pending_approval' AND hidden=0
-                   AND (created_by_token IS NULL OR created_by_token <> ?)
-                   AND (reviewer_token IS NULL OR reviewer_token <> ?)
-                 ORDER BY id ASC LIMIT $limit"
-            );
-            $st->execute([$excludeToken, $excludeToken]);
-        } else {
-            $st = $this->pdo->prepare(
-                "SELECT * FROM lots
-                 WHERE status='pending_review' AND hidden=0
-                   AND (created_by_token IS NULL OR created_by_token <> ?)
-                 ORDER BY id ASC LIMIT $limit"
-            );
-            $st->execute([$excludeToken]);
-        }
+        $st = $this->pdo->prepare(
+            "SELECT * FROM lots
+             WHERE status='pending_approval' AND hidden=0
+               AND (created_by_token IS NULL OR created_by_token <> ?)
+             ORDER BY id ASC LIMIT $limit"
+        );
+        $st->execute([$excludeToken]);
         return $st->fetchAll();
     }
 
-    /** 審査待ち件数（ボタンのバッジ用）。 */
+    /** 編集の承認待ち一覧（自分が提案したものは除外）。lotの現状とpayloadを返す。 */
+    public function listEditQueue(string $excludeToken, int $limit = 50): array
+    {
+        $limit = max(1, min(100, $limit));
+        $st = $this->pdo->prepare(
+            "SELECT * FROM proposals
+             WHERE status='pending' AND (proposer_token IS NULL OR proposer_token <> ?)
+             ORDER BY id ASC LIMIT $limit"
+        );
+        $st->execute([$excludeToken]);
+        $out = [];
+        foreach ($st->fetchAll() as $p) {
+            $lot = $this->getLot((int)$p['lot_id']);
+            if (!$lot || (int)$lot['hidden'] === 1) {
+                continue;
+            }
+            $out[] = [
+                'proposal' => [
+                    'id' => (int)$p['id'],
+                    'payload' => json_decode($p['payload'] ?? '{}', true) ?: [],
+                    'approve_count' => (int)$p['approve_count'],
+                    'approves_needed' => max(0, self::APPROVE_THRESHOLD - (int)$p['approve_count']),
+                ],
+                'lot' => $lot,
+            ];
+        }
+        return $out;
+    }
+
+    /** 審査待ち件数（新規公開待ち / 編集承認待ち）。 */
     public function queueCounts(string $excludeToken): array
     {
-        $r = $this->pdo->prepare("SELECT COUNT(*) AS c FROM lots WHERE status='pending_review' AND hidden=0 AND (created_by_token IS NULL OR created_by_token <> ?)");
+        $r = $this->pdo->prepare("SELECT COUNT(*) AS c FROM lots WHERE status='pending_approval' AND hidden=0 AND (created_by_token IS NULL OR created_by_token <> ?)");
         $r->execute([$excludeToken]);
-        $a = $this->pdo->prepare("SELECT COUNT(*) AS c FROM lots WHERE status='pending_approval' AND hidden=0 AND (created_by_token IS NULL OR created_by_token <> ?) AND (reviewer_token IS NULL OR reviewer_token <> ?)");
-        $a->execute([$excludeToken, $excludeToken]);
-        return ['review' => (int)$r->fetch()['c'], 'approval' => (int)$a->fetch()['c']];
+        $e = $this->pdo->prepare("SELECT COUNT(*) AS c FROM proposals WHERE status='pending' AND (proposer_token IS NULL OR proposer_token <> ?)");
+        $e->execute([$excludeToken]);
+        return ['new' => (int)$r->fetch()['c'], 'edit' => (int)$e->fetch()['c']];
     }
 
     /** 公開後に不適切指摘が集まったとき、関係者のポイントを剥奪し指摘者へ分配（1回のみ）。 */
     private function revokeInappropriate(int $lotId, array $lot): void
     {
-        $targets = array_values(array_unique(array_filter([
-            $lot['created_by_token'] ?? null,
-            $lot['reviewer_token'] ?? null,
-            $lot['approver_token'] ?? null,
-        ])));
+        // その投稿でプラスのポイントを得た全員（投稿者・承認者・編集提案者・編集承認者）を対象に、
+        // 得た分だけ剥奪する。
+        $ts = $this->pdo->prepare(
+            'SELECT user_token, COALESCE(SUM(points),0) AS net FROM point_events
+             WHERE lot_id = ? GROUP BY user_token HAVING SUM(points) > 0'
+        );
+        $ts->execute([$lotId]);
         $total = 0;
-        foreach ($targets as $t) {
-            $net = $this->lotUserNet($lotId, $t); // この投稿で得た分のみ
+        foreach ($ts->fetchAll() as $row) {
+            $net = (int)$row['net'];
             if ($net > 0) {
-                $this->appendPointEvent($t, $lotId, 'revoke_inappropriate', -$net, '公開後に不適切と判断され剥奪');
+                $this->appendPointEvent($row['user_token'], $lotId, 'revoke_inappropriate', -$net, '公開後に不適切と判断され剥奪');
                 $total += $net;
             }
         }
