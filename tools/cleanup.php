@@ -8,7 +8,7 @@
  *    （報告多数で自動非表示になったスパム等を、猶予期間つきで自動削除）
  * 2) どの駐車場からも参照されていない孤立画像ファイルを uploads/ から削除
  *    （写真差し替えや削除で残った古い画像を掃除してストレージを節約）
- * 3) 古い OSM 駐車場キャッシュ（cache/parking_*.json）を削除
+ * 3) 古い OSM キャッシュ（cache/parking_*.json・cache/places_*.json）を削除
  *    （キャッシュTTLは30日。30日以上使われていないものは消してディスクを節約）
  *
  * コアサーバーの cron に「毎日1回」登録しておけば、管理者の手作業なしで
@@ -75,11 +75,15 @@ if (is_dir($UPLOAD_DIR)) {
     }
 }
 
-// 3) 古い OSM 駐車場キャッシュの削除
+// 3) 古い OSM キャッシュの削除（駐車場 parking_* と 店 places_* の両方）
 $deletedCache = 0;
 if (is_dir($CACHE_DIR)) {
     $cutoff = time() - $CACHE_MAX_AGE_HOURS * 3600;
-    foreach (glob($CACHE_DIR . '/parking_*.json') ?: [] as $path) {
+    $cacheFiles = array_merge(
+        glob($CACHE_DIR . '/parking_*.json') ?: [],
+        glob($CACHE_DIR . '/places_*.json') ?: []
+    );
+    foreach ($cacheFiles as $path) {
         if (is_file($path) && filemtime($path) < $cutoff) {
             if (@unlink($path)) {
                 $deletedCache++;
