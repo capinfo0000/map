@@ -7,6 +7,10 @@
 const OVERPASS_CACHE_TTL = 2592000; // キャッシュ有効期間（秒）＝30日（駐車場の位置はほぼ変わらないため長め）
 const OVERPASS_MAX_SPAN  = 0.4;   // これより広い範囲はOverpass保護のためリクエストしない（約44km）
 const OVERPASS_LIMIT     = 500;   // 取得件数の上限（多いエリアで片側が欠けないよう十分大きく）
+const OVERPASS_QUERY_VER = 'v2';  // クエリ仕様のバージョン。変えると旧キャッシュを無効化して作り直す
+// 店舗利用者専用・私有など「一般に停められない」駐車場を除外するための access 値。
+// 例: マクドナルド等の客専用駐車場は OSM で access=customers、私有地は access=private。
+const OVERPASS_EXCLUDE_ACCESS = ['private', 'customers', 'no', 'permit', 'permit_holder'];
 
 /**
  * 指定 bbox の駐車場一覧を返す（キャッシュ優先）。
@@ -30,7 +34,7 @@ function parking_nearby(array $bbox, string $cacheDir): array
     if (!is_dir($cacheDir)) {
         @mkdir($cacheDir, 0775, true);
     }
-    $key  = md5("$minLat,$minLng,$maxLat,$maxLng");
+    $key  = md5(OVERPASS_QUERY_VER . ":$minLat,$minLng,$maxLat,$maxLng");
     $file = $cacheDir . '/parking_' . $key . '.json';
 
     // 有効なキャッシュがあれば即返す
@@ -61,10 +65,12 @@ function parking_nearby(array $bbox, string $cacheDir): array
 function overpass_fetch(float $minLat, float $minLng, float $maxLat, float $maxLng): ?array
 {
     $bbox = "$minLat,$minLng,$maxLat,$maxLng";
+    // access が「私有・客専用」等のものはクエリ段階で除外（負の正規表現。access タグ無しは残る）
+    $excl = '^(' . implode('|', OVERPASS_EXCLUDE_ACCESS) . ')$';
     $q = '[out:json][timeout:20];('
-        . 'node["amenity"="parking"](' . $bbox . ');'
-        . 'way["amenity"="parking"](' . $bbox . ');'
-        . ');out center ' . OVERPASS_LIMIT . ';';
+        . 'node["amenity"="parking"]["access"!~"' . $excl . '"](' . $bbox . ');'
+        . 'way["amenity"="parking"]["access"!~"' . $excl . '"](' . $bbox . ');'
+        . ');out tags center ' . OVERPASS_LIMIT . ';';
 
     $endpoints = [
         'https://overpass-api.de/api/interpreter',
@@ -107,7 +113,13 @@ function overpass_fetch(float $minLat, float $minLng, float $maxLat, float $maxL
             if ($lat === null || $lng === null) {
                 continue;
             }
-            $name = $e['tags']['name:ja'] ?? ($e['tags']['name'] ?? '');
+            $tags = $e['tags'] ?? [];
+            // 念のためサーバー側でも除外（クエリのすり抜け対策）。
+            $access = strtolower((string)($tags['access'] ?? ''));
+            if (in_array($access, OVERPASS_EXCLUDE_ACCESS, true)) {
+                continue;
+            }
+            $name = $tags['name:ja'] ?? ($tags['name'] ?? '');
             $out[] = ['lat' => (float)$lat, 'lng' => (float)$lng, 'name' => (string)$name];
         }
         return $out;
