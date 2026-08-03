@@ -18,7 +18,7 @@ const state = {
   me: null, // 自分の貢献ランク {points, rank, nextRank, badges, stats, nickname}
   loggedIn: false, // ログイン状態（識別はサーバーのセッション）
   username: null,
-  queueTab: 'review', // 審査モーダルの現在タブ
+  queueTab: 'new', // 審査モーダルの現在タブ（new=新規公開待ち / edit=編集承認待ち）
 };
 
 // ---- 地図初期化 ----
@@ -48,6 +48,12 @@ function toast(msg) {
 function daysSince(iso) {
   if (!iso) return null;
   return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+}
+function fmtDate(iso) {
+  if (!iso) return '不明';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '不明';
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
 }
 function relTime(iso) {
   const d = daysSince(iso);
@@ -381,7 +387,7 @@ function popupHtml(lot) {
   const dist = distLabel(lot);
   const photo = lot.photo
     ? `<img class="popup-photo" src="/uploads/${lot.photo}" alt="料金看板" data-photo="${lot.photo}" title="タップで拡大" />
-       <div class="popup-photo-cap">🔍 タップで拡大 — 実際の料金はこの看板でご確認ください</div>`
+       <div class="popup-photo-cap">📅 ${fmtDate(lot.updated_at)} 時点 ・ 🔍 タップで拡大 — 実際の料金はこの看板でご確認ください</div>`
     : '';
   const noPhoto = !lot.photo ? '<span class="badge badge-photo">📷 写真なし</span>' : '';
   const sample = lot.source === 'osm' ? '<span class="badge badge-sample">🔰 サンプル・未確認</span>' : '';
@@ -417,7 +423,8 @@ function shopPopupHtml(lot) {
   const fresh = freshness(lot);
   const dist = distLabel(lot);
   const photo = lot.photo
-    ? `<img class="popup-photo" src="/uploads/${lot.photo}" alt="店の写真" data-photo="${lot.photo}" title="タップで拡大" />`
+    ? `<img class="popup-photo" src="/uploads/${lot.photo}" alt="店の写真" data-photo="${lot.photo}" title="タップで拡大" />
+       <div class="popup-photo-cap">📅 ${fmtDate(lot.updated_at)} 時点</div>`
     : '';
   const sample = lot.source === 'osm' ? '<span class="badge badge-sample">🔰 サンプル・未確認</span>' : '';
   return `
@@ -553,7 +560,10 @@ async function approveProposal(pid, lotId, btn) {
     const json = await res.json();
     if (res.status === 401) { openAuth('login'); return; }
     if (res.status === 409) { toast('すでに承認済みです'); return; }
+    if (res.status === 403) { toast(json.error || '自分の編集は承認できません'); return; }
     if (!res.ok) { toast(json.error || 'エラーが発生しました'); if (btn) { btn.disabled = false; btn.textContent = '👍 この編集を承認'; } return; }
+    if (json.me) applyMe(json.me);
+    updateQueueCounts(json.counts);
     if (json.applied) {
       toast('承認が集まり、編集が確定しました🎉');
       await loadLots();
@@ -588,47 +598,78 @@ async function loadQueue(type) {
     const d = await res.json();
     updateQueueCounts(d.counts);
     if (!d.items || !d.items.length) {
-      box.innerHTML = '<p class="q-empty">' + (type === 'review' ? 'レビュー待ちの投稿はありません' : '承認待ちの投稿はありません') + '</p>';
+      box.innerHTML = '<p class="q-empty">' + (type === 'edit' ? '編集の承認待ちはありません' : '新規の公開待ちはありません') + '</p>';
       return;
     }
-    box.innerHTML = d.items.map((l) => renderQueueItem(l, type)).join('');
+    box.innerHTML = type === 'edit'
+      ? d.items.map((it) => renderEditQueueItem(it.lot, it.proposal)).join('')
+      : d.items.map((l) => renderNewQueueItem(l)).join('');
   } catch (e) {
     box.innerHTML = '<p class="q-empty">読み込みに失敗しました</p>';
   }
 }
 
-function renderQueueItem(lot, type) {
+function lotBrief(lot) {
   const isShop = lot.kind === 'shop';
-  const photo = lot.photo
-    ? `<img class="q-photo popup-photo" src="/uploads/${lot.photo}" alt="投稿写真" data-photo="${lot.photo}" title="タップで拡大" />`
-    : '<div class="q-nophoto">写真なし</div>';
-  const info = isShop
+  return isShop
     ? `${lot.category ? `🏷️ ${escapeHtml(lot.category)}　` : ''}🕒 ${lot.hours ? escapeHtml(lot.hours) : '営業時間未登録'}`
     : `${escapeHtml(ratesText(lot))}${lot.fee_note ? `<br>📝 ${escapeHtml(lot.fee_note)}` : ''}`;
-  const kindTag = isShop ? '🏬 店' : '🅿️ 駐車場';
-  const buttons = type === 'review'
-    ? `<button class="q-ok" data-qact="review-ok" data-id="${lot.id}">✅ 問題なし</button>
-       <button class="q-ng" data-qact="review-ng" data-id="${lot.id}">🚩 却下（不適切）</button>`
-    : `<button class="q-ok" data-qact="approve-ok" data-id="${lot.id}">✅ 公開を承認</button>
-       <button class="q-ng" data-qact="approve-ng" data-id="${lot.id}">⚠️ レビューが雑（差し戻し）</button>`;
+}
+function photoCell(photo, label) {
+  return photo
+    ? `<figure class="q-photofig"><img class="q-photo popup-photo" src="/uploads/${photo}" alt="${label}" data-photo="${photo}" title="タップで拡大" /><figcaption>${label}</figcaption></figure>`
+    : `<figure class="q-photofig"><div class="q-nophoto">写真なし</div><figcaption>${label}</figcaption></figure>`;
+}
+
+// 新規の公開待ち（1人の承認で公開）
+function renderNewQueueItem(lot) {
+  const kindTag = lot.kind === 'shop' ? '🏬 店' : '🅿️ 駐車場';
   return `<div class="q-item" data-id="${lot.id}">
-      ${photo}
+      ${photoCell(lot.photo, '投稿写真')}
       <div class="q-body">
         <div class="q-name">${kindTag}｜${escapeHtml(lot.name)}</div>
-        <div class="q-info">${info}</div>
+        <div class="q-info">${lotBrief(lot)}</div>
         ${lot.address ? `<div class="q-addr">📍 ${escapeHtml(lot.address)}</div>` : ''}
-        <div class="q-actions">${buttons}</div>
+        <div class="q-date">📅 ${fmtDate(lot.created_at)} 投稿</div>
+        <div class="q-actions">
+          <button class="q-ok" data-qact="new-ok" data-id="${lot.id}">✅ 公開を承認</button>
+          <button class="q-ng" data-qact="new-ng" data-id="${lot.id}">🚩 却下（不適切）</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+// 編集の承認待ち（10人の承認で確定）。今の情報と提案内容を新旧2枚で見比べる。
+function renderEditQueueItem(lot, proposal) {
+  const kindTag = lot.kind === 'shop' ? '🏬 店' : '🅿️ 駐車場';
+  const pl = proposal.payload || {};
+  const merged = Object.assign({}, lot, pl); // 提案適用後のイメージ
+  const newPhoto = pl.photo || lot.photo;
+  return `<div class="q-item q-edit" data-id="${lot.id}">
+      <div class="q-compare">
+        ${photoCell(lot.photo, '今の写真')}
+        <div class="q-arrow">→</div>
+        ${photoCell(newPhoto, '新しい写真')}
+      </div>
+      <div class="q-body">
+        <div class="q-name">${kindTag}｜${escapeHtml(merged.name || lot.name)}</div>
+        <div class="q-info"><span class="q-old">今: ${lotBrief(lot)}</span><br><span class="q-new">新: ${lotBrief(merged)}</span></div>
+        <div class="q-date">📅 今の写真: ${fmtDate(lot.updated_at)}</div>
+        <div class="q-actions">
+          <span class="prop-need">あと ${proposal.approves_needed} 人の承認で確定</span>
+          <button class="q-ok" data-qact="edit-approve" data-pid="${proposal.id}" data-lot="${lot.id}">👍 この編集を承認</button>
+        </div>
       </div>
     </div>`;
 }
 
 function updateQueueCounts(counts) {
   if (!counts) return;
-  const r = counts.review || 0, a = counts.approval || 0;
-  const rev = $('#qc-review'); if (rev) rev.textContent = r;
-  const app = $('#qc-approval'); if (app) app.textContent = a;
+  const n = counts.new || 0, ed = counts.edit || 0;
+  const en = $('#qc-new'); if (en) en.textContent = n;
+  const ee = $('#qc-edit'); if (ee) ee.textContent = ed;
   const badge = $('#queue-badge');
-  if (badge) { badge.textContent = r + a; badge.classList.toggle('hidden', (r + a) === 0); }
+  if (badge) { badge.textContent = n + ed; badge.classList.toggle('hidden', (n + ed) === 0); }
 }
 async function refreshQueueCounts() {
   try {
@@ -639,21 +680,38 @@ async function refreshQueueCounts() {
   } catch (e) { /* noop */ }
 }
 
-// レビュー/承認の実行。path='review' | 'publish'
-async function moderate(id, path, ok) {
+// 新規投稿の承認/却下（1人でOK）
+async function moderate(id, ok) {
   try {
-    const res = await fetch(`/api/lots/${id}/${path}`, {
+    const res = await fetch(`/api/lots/${id}/publish`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok }),
     });
     const d = await res.json();
     if (res.status === 401) { openAuth('login'); return; }
-    if (!res.ok) { toast(d.error || 'これは審査できません'); return; }
+    if (!res.ok) { toast(d.error || 'これは承認できません'); return; }
     if (d.me) applyMe(d.me);
     updateQueueCounts(d.counts);
-    if (path === 'review') toast(ok ? 'レビューしました（承認待ちへ）＋1pt' : '却下しました');
-    else toast(d.result === 'published' ? '公開を承認しました🎉 ＋2pt' : '差し戻しました（レビューが不適切）');
+    toast(d.result === 'published' ? '公開を承認しました🎉 ＋2pt' : '却下しました');
     loadQueue(state.queueTab);
-    if (path === 'publish' && d.result === 'published') loadLots(); // 公開されたので地図を更新
+    if (d.result === 'published') loadLots(); // 公開されたので地図を更新
+  } catch (e) {
+    toast('通信に失敗しました');
+  }
+}
+
+// 編集提案の承認（キュー内）。10承認で確定。
+async function approveEdit(pid, lotId) {
+  try {
+    const res = await fetch(`/api/proposals/${pid}/approve`, { method: 'POST' });
+    const d = await res.json();
+    if (res.status === 401) { openAuth('login'); return; }
+    if (res.status === 409) { toast('すでに承認済みです'); return; }
+    if (!res.ok) { toast(d.error || 'これは承認できません'); return; }
+    if (d.me) applyMe(d.me);
+    updateQueueCounts(d.counts);
+    toast(d.applied ? '承認が集まり、編集が確定しました🎉' : `承認しました。あと${d.approves_needed}人で確定します`);
+    loadQueue('edit');
+    if (d.applied) loadLots();
   } catch (e) {
     toast('通信に失敗しました');
   }
@@ -1172,21 +1230,18 @@ $('#lot-form').addEventListener('submit', async (e) => {
       errEl.classList.remove('hidden');
       return;
     }
-    // 確定済みの店の編集は「提案」として保留（10承認で確定）
+    // 編集は「提案」として保留（10承認で確定。承認までは今の情報が表示される）
     if (json.proposed) {
       closeForm();
       const need = json.proposal ? json.proposal.approves_needed : json.threshold;
-      toast(`編集を提案しました。あと${need}人の承認で確定します🙏`);
-      // 承認待ちを見せるため、その店のポップアップを開き直す
-      await loadLots();
-      const m = state.markers.get(editing);
-      if (m) m.openPopup();
+      toast(`編集を提案しました。あと${need}人の承認で確定します（承認まで今の情報が表示されます）🙏`);
+      refreshQueueCounts();
       return;
     }
-    // 新規投稿はレビュー→承認を経てから公開（すぐ地図には出ない）
+    // 新規投稿は1人の承認を経てから公開（すぐ地図には出ない）
     if (json.pending) {
       closeForm();
-      toast('投稿しました🙏 ほかのユーザーのレビュー・承認を経て公開されます');
+      toast('投稿しました🙏 ほかのユーザー1人の承認で公開されます');
       if (json.me) applyMe(json.me);
       refreshQueueCounts();
       return;
@@ -1257,15 +1312,13 @@ document.addEventListener('click', (e) => {
     approveProposal(Number(apBtn.dataset.pid), Number(apBtn.dataset.lot), apBtn);
     return;
   }
-  // 審査（レビュー / 承認）ボタン
+  // 審査ボタン（新規の公開承認 / 編集の承認）
   const qBtn = e.target.closest('[data-qact]');
   if (qBtn) {
-    const id = Number(qBtn.dataset.id);
     const a = qBtn.dataset.qact;
-    if (a === 'review-ok') moderate(id, 'review', true);
-    else if (a === 'review-ng') { if (confirm('この投稿を「不適切」として却下します。よろしいですか？')) moderate(id, 'review', false); }
-    else if (a === 'approve-ok') moderate(id, 'publish', true);
-    else if (a === 'approve-ng') { if (confirm('レビューが不適切として差し戻します。レビュー者のポイントはあなたに移ります。よろしいですか？')) moderate(id, 'publish', false); }
+    if (a === 'new-ok') moderate(Number(qBtn.dataset.id), true);
+    else if (a === 'new-ng') { if (confirm('この投稿を「不適切」として却下します。よろしいですか？')) moderate(Number(qBtn.dataset.id), false); }
+    else if (a === 'edit-approve') approveEdit(Number(qBtn.dataset.pid), Number(qBtn.dataset.lot));
     return;
   }
   const photo = e.target.closest('.popup-photo');

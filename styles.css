@@ -275,10 +275,19 @@ button { font-family: inherit; cursor: pointer; }
 .q-name { font-weight: 700; font-size: 14px; margin-bottom: 2px; }
 .q-info { font-size: 12px; color: var(--ink); line-height: 1.5; }
 .q-addr { font-size: 11px; color: var(--muted); margin-top: 2px; }
-.q-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.q-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
 .q-ok, .q-ng { border: none; border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 600; cursor: pointer; }
 .q-ok { background: var(--green); color: #fff; }
 .q-ng { background: #f3f4f6; color: var(--red); }
+.q-date { font-size: 11px; color: var(--muted); margin-top: 4px; }
+/* 編集の承認待ち: 新旧2枚の比較 */
+.q-item.q-edit { flex-direction: column; }
+.q-compare { display: flex; align-items: center; gap: 8px; }
+.q-photofig { margin: 0; text-align: center; }
+.q-photofig figcaption { font-size: 10px; color: var(--muted); margin-top: 2px; }
+.q-arrow { font-size: 20px; color: var(--muted); }
+.q-old { color: var(--muted); }
+.q-new { color: var(--ink); font-weight: 600; }
 
 .hidden { display: none !important; }
 

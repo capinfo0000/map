@@ -7,7 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🅿️</text></svg>" />
   <meta name="description" content="みんなで作る駐車場マップ。周辺の駐車場と料金を地図で探して、最安値を見つけよう。" />
   <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
-  <link rel="stylesheet" href="styles.css?v=20260803b" />
+  <link rel="stylesheet" href="styles.css?v=20260803c" />
 </head>
 <body>
   <div id="app">
@@ -166,12 +166,12 @@
         <h2>📋 みんなで審査して公開</h2>
         <button id="queue-close" class="icon-btn">✕</button>
       </div>
-      <p class="queue-lead">写真や内容を見て、投稿を公開してよいか判定してください。<br>
-        <strong>🏆 一番ポイントがもらえるのは投稿者です</strong>（公開時 +5、写真つき +3）。レビュー +1／承認 +2。<br>
-        雑なレビューを承認者が見抜くと、レビューのポイントは承認者に移ります。公開後に10人以上から「不適切」と指摘されると、投稿者・レビュー者・承認者のポイントは剥奪され、指摘した人へ分配されます。</p>
+      <p class="queue-lead">写真や内容を見て、公開してよいか判定してください。<br>
+        <strong>🏆 一番ポイントがもらえるのは投稿者です</strong>（公開時 +5、写真つき +3）。新規の承認 +2／編集の承認 +1。<br>
+        <b>新規は1人の承認で公開</b>、<b>編集は10人の承認で確定</b>します（編集は今の写真と新しい写真を見比べて判断）。公開後に10人以上から「不適切」と指摘されると、その投稿で得たポイントは剥奪され、指摘した人へ分配されます。</p>
       <div class="queue-tabs">
-        <button class="queue-tab active" data-qtab="review">レビュー待ち <span class="qc" id="qc-review">0</span></button>
-        <button class="queue-tab" data-qtab="approval">承認待ち <span class="qc" id="qc-approval">0</span></button>
+        <button class="queue-tab active" data-qtab="new">新規の公開待ち <span class="qc" id="qc-new">0</span></button>
+        <button class="queue-tab" data-qtab="edit">編集の承認待ち <span class="qc" id="qc-edit">0</span></button>
       </div>
       <div id="queue-list" class="queue-list"></div>
     </div>
@@ -196,7 +196,7 @@
       <h3 class="profile-h3">バッジ</h3>
       <div class="badge-grid" id="badge-grid"></div>
 
-      <p class="profile-note">🏆 <strong>一番ポイントがもらえるのは投稿者</strong>です（公開時 +5、写真つき +3）。レビュー +1／承認 +2。投稿はレビュー→承認を経て公開されます。公開後に10人以上から「不適切」と指摘されると、投稿者・レビュー者・承認者のポイントは剥奪され、指摘した人へ分配されます。</p>
+      <p class="profile-note">🏆 <strong>一番ポイントがもらえるのは投稿者</strong>です（公開時 +5、写真つき +3）。新規の承認 +2／編集の承認 +1／編集が確定 +2。新規は1人の承認で公開、編集は10人の承認で確定します。公開後に10人以上から「不適切」と指摘されると、その投稿で得たポイントは剥奪され、指摘した人へ分配されます。</p>
     </div>
   </div>
 
@@ -206,6 +206,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/vendor/leaflet/leaflet.js"></script>
-  <script src="app.js?v=20260803b"></script>
+  <script src="app.js?v=20260803c"></script>
 </body>
 </html>
