@@ -7,7 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🅿️</text></svg>" />
   <meta name="description" content="みんなで作る駐車場マップ。周辺の駐車場と料金を地図で探して、最安値を見つけよう。" />
   <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
-  <link rel="stylesheet" href="styles.css?v=20260803a" />
+  <link rel="stylesheet" href="styles.css?v=20260803b" />
 </head>
 <body>
   <div id="app">
@@ -17,6 +17,7 @@
         <button id="rank-chip" class="rank-chip hidden" title="あなたの貢献ランク">🥉 ブロンズ<span class="rank-pts">0pt</span></button>
         <button id="btn-login" class="icon-btn">ログイン / 登録</button>
         <button id="btn-logout" class="icon-btn hidden" title="ログアウト">ログアウト</button>
+        <button id="btn-queue" class="icon-btn" title="レビュー・承認して公開を手伝う">📋 審査<span id="queue-badge" class="queue-badge hidden">0</span></button>
         <button id="btn-refresh" class="icon-btn" title="この地図を更新">🔄 更新</button>
         <button id="btn-locate" class="icon-btn" title="現在地へ">📍 現在地</button>
         <button id="btn-add" class="primary-btn">🅿️ 駐車場を登録</button>
@@ -158,6 +159,24 @@
     </div>
   </div>
 
+  <!-- みんなで審査（レビュー / 承認） -->
+  <div id="queue" class="modal hidden">
+    <div class="modal-card queue-card">
+      <div class="modal-head">
+        <h2>📋 みんなで審査して公開</h2>
+        <button id="queue-close" class="icon-btn">✕</button>
+      </div>
+      <p class="queue-lead">写真や内容を見て、投稿を公開してよいか判定してください。<br>
+        <strong>🏆 一番ポイントがもらえるのは投稿者です</strong>（公開時 +5、写真つき +3）。レビュー +1／承認 +2。<br>
+        雑なレビューを承認者が見抜くと、レビューのポイントは承認者に移ります。公開後に10人以上から「不適切」と指摘されると、投稿者・レビュー者・承認者のポイントは剥奪され、指摘した人へ分配されます。</p>
+      <div class="queue-tabs">
+        <button class="queue-tab active" data-qtab="review">レビュー待ち <span class="qc" id="qc-review">0</span></button>
+        <button class="queue-tab" data-qtab="approval">承認待ち <span class="qc" id="qc-approval">0</span></button>
+      </div>
+      <div id="queue-list" class="queue-list"></div>
+    </div>
+  </div>
+
   <!-- プロフィール（貢献ランク） -->
   <div id="profile" class="modal hidden">
     <div class="modal-card">
@@ -177,7 +196,7 @@
       <h3 class="profile-h3">バッジ</h3>
       <div class="badge-grid" id="badge-grid"></div>
 
-      <p class="profile-note">確認・登録・写真添付などで貢献するとランクが上がります。あなたが登録した情報を他の人が「✅正しい」と確認するとさらにポイントが入ります。</p>
+      <p class="profile-note">🏆 <strong>一番ポイントがもらえるのは投稿者</strong>です（公開時 +5、写真つき +3）。レビュー +1／承認 +2。投稿はレビュー→承認を経て公開されます。公開後に10人以上から「不適切」と指摘されると、投稿者・レビュー者・承認者のポイントは剥奪され、指摘した人へ分配されます。</p>
     </div>
   </div>
 
@@ -187,6 +206,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/vendor/leaflet/leaflet.js"></script>
-  <script src="app.js?v=20260803a"></script>
+  <script src="app.js?v=20260803b"></script>
 </body>
 </html>

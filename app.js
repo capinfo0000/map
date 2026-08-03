@@ -18,6 +18,7 @@ const state = {
   me: null, // 自分の貢献ランク {points, rank, nextRank, badges, stats, nickname}
   loggedIn: false, // ログイン状態（識別はサーバーのセッション）
   username: null,
+  queueTab: 'review', // 審査モーダルの現在タブ
 };
 
 // ---- 地図初期化 ----
@@ -568,6 +569,96 @@ async function approveProposal(pid, lotId, btn) {
   }
 }
 
+// ---- みんなで審査（レビュー / 承認） ----
+function openQueue() {
+  if (!ensureLoggedIn()) return;
+  $('#queue').classList.remove('hidden');
+  loadQueue(state.queueTab || 'review');
+}
+function closeQueue() { $('#queue').classList.add('hidden'); }
+
+async function loadQueue(type) {
+  state.queueTab = type;
+  document.querySelectorAll('.queue-tab').forEach((b) => b.classList.toggle('active', b.dataset.qtab === type));
+  const box = $('#queue-list');
+  box.innerHTML = '<p class="q-empty">読み込み中…</p>';
+  try {
+    const res = await fetch('/api/queue?type=' + type);
+    if (res.status === 401) { closeQueue(); openAuth('login'); return; }
+    const d = await res.json();
+    updateQueueCounts(d.counts);
+    if (!d.items || !d.items.length) {
+      box.innerHTML = '<p class="q-empty">' + (type === 'review' ? 'レビュー待ちの投稿はありません' : '承認待ちの投稿はありません') + '</p>';
+      return;
+    }
+    box.innerHTML = d.items.map((l) => renderQueueItem(l, type)).join('');
+  } catch (e) {
+    box.innerHTML = '<p class="q-empty">読み込みに失敗しました</p>';
+  }
+}
+
+function renderQueueItem(lot, type) {
+  const isShop = lot.kind === 'shop';
+  const photo = lot.photo
+    ? `<img class="q-photo popup-photo" src="/uploads/${lot.photo}" alt="投稿写真" data-photo="${lot.photo}" title="タップで拡大" />`
+    : '<div class="q-nophoto">写真なし</div>';
+  const info = isShop
+    ? `${lot.category ? `🏷️ ${escapeHtml(lot.category)}　` : ''}🕒 ${lot.hours ? escapeHtml(lot.hours) : '営業時間未登録'}`
+    : `${escapeHtml(ratesText(lot))}${lot.fee_note ? `<br>📝 ${escapeHtml(lot.fee_note)}` : ''}`;
+  const kindTag = isShop ? '🏬 店' : '🅿️ 駐車場';
+  const buttons = type === 'review'
+    ? `<button class="q-ok" data-qact="review-ok" data-id="${lot.id}">✅ 問題なし</button>
+       <button class="q-ng" data-qact="review-ng" data-id="${lot.id}">🚩 却下（不適切）</button>`
+    : `<button class="q-ok" data-qact="approve-ok" data-id="${lot.id}">✅ 公開を承認</button>
+       <button class="q-ng" data-qact="approve-ng" data-id="${lot.id}">⚠️ レビューが雑（差し戻し）</button>`;
+  return `<div class="q-item" data-id="${lot.id}">
+      ${photo}
+      <div class="q-body">
+        <div class="q-name">${kindTag}｜${escapeHtml(lot.name)}</div>
+        <div class="q-info">${info}</div>
+        ${lot.address ? `<div class="q-addr">📍 ${escapeHtml(lot.address)}</div>` : ''}
+        <div class="q-actions">${buttons}</div>
+      </div>
+    </div>`;
+}
+
+function updateQueueCounts(counts) {
+  if (!counts) return;
+  const r = counts.review || 0, a = counts.approval || 0;
+  const rev = $('#qc-review'); if (rev) rev.textContent = r;
+  const app = $('#qc-approval'); if (app) app.textContent = a;
+  const badge = $('#queue-badge');
+  if (badge) { badge.textContent = r + a; badge.classList.toggle('hidden', (r + a) === 0); }
+}
+async function refreshQueueCounts() {
+  try {
+    const res = await fetch('/api/queue/counts');
+    if (!res.ok) return;
+    const d = await res.json();
+    updateQueueCounts(d.counts);
+  } catch (e) { /* noop */ }
+}
+
+// レビュー/承認の実行。path='review' | 'publish'
+async function moderate(id, path, ok) {
+  try {
+    const res = await fetch(`/api/lots/${id}/${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok }),
+    });
+    const d = await res.json();
+    if (res.status === 401) { openAuth('login'); return; }
+    if (!res.ok) { toast(d.error || 'これは審査できません'); return; }
+    if (d.me) applyMe(d.me);
+    updateQueueCounts(d.counts);
+    if (path === 'review') toast(ok ? 'レビューしました（承認待ちへ）＋1pt' : '却下しました');
+    else toast(d.result === 'published' ? '公開を承認しました🎉 ＋2pt' : '差し戻しました（レビューが不適切）');
+    loadQueue(state.queueTab);
+    if (path === 'publish' && d.result === 'published') loadLots(); // 公開されたので地図を更新
+  } catch (e) {
+    toast('通信に失敗しました');
+  }
+}
+
 // ---- 貢献ランク（reputation） ----
 async function fetchMe() {
   try {
@@ -1092,6 +1183,14 @@ $('#lot-form').addEventListener('submit', async (e) => {
       if (m) m.openPopup();
       return;
     }
+    // 新規投稿はレビュー→承認を経てから公開（すぐ地図には出ない）
+    if (json.pending) {
+      closeForm();
+      toast('投稿しました🙏 ほかのユーザーのレビュー・承認を経て公開されます');
+      if (json.me) applyMe(json.me);
+      refreshQueueCounts();
+      return;
+    }
     closeForm();
     toast(editing ? '更新しました！' : '登録しました！ありがとうございます');
     if (json.me) applyMe(json.me);
@@ -1158,6 +1257,17 @@ document.addEventListener('click', (e) => {
     approveProposal(Number(apBtn.dataset.pid), Number(apBtn.dataset.lot), apBtn);
     return;
   }
+  // 審査（レビュー / 承認）ボタン
+  const qBtn = e.target.closest('[data-qact]');
+  if (qBtn) {
+    const id = Number(qBtn.dataset.id);
+    const a = qBtn.dataset.qact;
+    if (a === 'review-ok') moderate(id, 'review', true);
+    else if (a === 'review-ng') { if (confirm('この投稿を「不適切」として却下します。よろしいですか？')) moderate(id, 'review', false); }
+    else if (a === 'approve-ok') moderate(id, 'publish', true);
+    else if (a === 'approve-ng') { if (confirm('レビューが不適切として差し戻します。レビュー者のポイントはあなたに移ります。よろしいですか？')) moderate(id, 'publish', false); }
+    return;
+  }
   const photo = e.target.closest('.popup-photo');
   if (photo) {
     const lb = $('#lightbox');
@@ -1177,6 +1287,13 @@ $('#btn-locate').addEventListener('click', () => locate());
 $('#btn-refresh').addEventListener('click', forceRefresh);
 $('#btn-add').addEventListener('click', () => { if (ensureLoggedIn()) startAddMode('parking'); });
 $('#btn-add-shop').addEventListener('click', () => { if (ensureLoggedIn()) startAddMode('shop'); });
+$('#btn-queue').addEventListener('click', openQueue);
+$('#queue-close').addEventListener('click', closeQueue);
+$('#queue').addEventListener('click', (e) => {
+  const tab = e.target.closest('.queue-tab');
+  if (tab) { loadQueue(tab.dataset.qtab); return; }
+  if (e.target.id === 'queue') closeQueue();
+});
 
 // ---- ログイン/登録 ----
 $('#btn-login').addEventListener('click', () => openAuth('login'));
@@ -1262,6 +1379,7 @@ map.on('moveend', scheduleReload);
 
 // ---- 起動 ----
 fetchMe(); // 自分の貢献ランクを取得してチップに反映
+refreshQueueCounts(); // 審査待ち件数をボタンのバッジに反映
 // まず現在地の取得を試み、その付近の駐車場を「近い順」で初期表示する。
 // 位置が取れなければ既定表示（東京駅周辺）のまま概算順で表示。
 (async () => {

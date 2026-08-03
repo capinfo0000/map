@@ -256,6 +256,30 @@ button { font-family: inherit; cursor: pointer; }
 .act-approve:hover { background: #6d28d9; }
 .act-approve:disabled { opacity: .6; }
 
+/* 審査（レビュー/承認）バッジとモーダル */
+.queue-badge { display: inline-block; min-width: 16px; padding: 0 4px; margin-left: 3px; border-radius: 9px; background: var(--red); color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
+.queue-card { max-width: 560px; width: 92vw; }
+.queue-lead { font-size: 12px; color: var(--muted); line-height: 1.7; margin: 0 0 10px; }
+.queue-lead strong { color: #b45309; }
+.queue-tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+.queue-tab { flex: 1; padding: 8px; border: 1px solid var(--line); background: #f6f7f9; border-radius: 8px; font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.queue-tab.active { background: var(--brand); color: #fff; border-color: var(--brand); }
+.queue-tab .qc { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 3px; border-radius: 9px; background: rgba(0,0,0,.12); font-size: 11px; }
+.queue-tab.active .qc { background: rgba(255,255,255,.3); }
+.queue-list { max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.q-empty { text-align: center; color: var(--muted); font-size: 13px; padding: 24px 0; }
+.q-item { display: flex; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
+.q-photo { width: 92px; height: 92px; object-fit: cover; border-radius: 8px; cursor: zoom-in; flex-shrink: 0; }
+.q-nophoto { width: 92px; height: 92px; border-radius: 8px; background: #f0f2f5; color: var(--muted); font-size: 11px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.q-body { flex: 1; min-width: 0; }
+.q-name { font-weight: 700; font-size: 14px; margin-bottom: 2px; }
+.q-info { font-size: 12px; color: var(--ink); line-height: 1.5; }
+.q-addr { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.q-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.q-ok, .q-ng { border: none; border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.q-ok { background: var(--green); color: #fff; }
+.q-ng { background: #f3f4f6; color: var(--red); }
+
 .hidden { display: none !important; }
 
 /* ---- responsive ---- */
