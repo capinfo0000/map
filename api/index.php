@@ -320,8 +320,10 @@ if (preg_match('#^/lots/(\d+)/(confirm|report)$#', $route, $m) && $method === 'P
     $id = (int)$m[1];
     $kind = $m[2];
     $body = read_json_body();
-    // 報告理由: inappropriate（不適切）ならその旨を記録（少数で自動非表示）
-    $comment = ($kind === 'report' && ($body['reason'] ?? '') === 'inappropriate') ? 'inappropriate' : ($body['comment'] ?? null);
+    // 報告理由: inappropriate（不適切）/ closed（なくなった・閉鎖）を記録し、閾値で自動非表示
+    $reason = $body['reason'] ?? '';
+    $comment = ($kind === 'report' && in_array($reason, ['inappropriate', 'closed'], true))
+        ? $reason : ($body['comment'] ?? null);
     // 確認時、その駐車場が「要更新（3か月以上）」だったかを記録（鮮度キーパー用）
     $target = $db->getLot($id);
     $wasStale = $target ? !empty(trustLevel($target)['stale']) : false;

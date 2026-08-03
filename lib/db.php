@@ -19,6 +19,8 @@ class DB
     const HIDE_MIN_REPORTS = 5;
     // 「不適切」通報がこの数に達したら即非表示（ログイン必須で通報が信頼できる前提）
     const HIDE_INAPPROPRIATE = 10;
+    // 「なくなった/閉鎖」報告がこの数に達したら非表示（確認済みでも閉店はあり得るので確認数は問わない）
+    const HIDE_CLOSED = 5;
 
     public function __construct(array $config)
     {
@@ -742,6 +744,17 @@ class DB
                         if ((int)($lot['points_revoked'] ?? 0) === 0) {
                             $this->revokeInappropriate($lotId, $lot);
                         }
+                    }
+                }
+                // 「なくなった/閉鎖」報告が既定数に達したら非表示（確認済みでも閉店はあり得るため確認数は問わない。ポイント剥奪はしない）
+                if ($comment === 'closed') {
+                    $cc = $this->pdo->prepare(
+                        "SELECT COUNT(*) AS c FROM reports WHERE lot_id = ? AND kind = 'report' AND comment = 'closed'"
+                    );
+                    $cc->execute([$lotId]);
+                    if ((int)$cc->fetch()['c'] >= self::HIDE_CLOSED) {
+                        $this->pdo->prepare('UPDATE lots SET hidden = 1, hidden_at = ? WHERE id = ? AND hidden = 0')
+                            ->execute([$now, $lotId]);
                     }
                 }
             }

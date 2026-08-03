@@ -412,6 +412,7 @@ function popupHtml(lot) {
       <div class="popup-actions">
         <button class="act-confirm" data-act="confirm" data-id="${lot.id}">✅ 情報は正しい</button>
         <button class="act-report" data-act="report" data-id="${lot.id}">⚠️ 違う/古い</button>
+        <button class="act-report" data-act="closed" data-id="${lot.id}">🚧 なくなった</button>
         <button class="act-report" data-act="inappropriate" data-id="${lot.id}">🚩 不適切</button>
         <button class="act-edit" data-act="edit" data-id="${lot.id}">✏️ 編集</button>
       </div>
@@ -447,6 +448,7 @@ function shopPopupHtml(lot) {
       <div class="popup-actions">
         <button class="act-confirm" data-act="confirm" data-id="${lot.id}">✅ 情報は正しい</button>
         <button class="act-report" data-act="report" data-id="${lot.id}">⚠️ 違う/古い</button>
+        <button class="act-report" data-act="closed" data-id="${lot.id}">🚧 なくなった</button>
         <button class="act-report" data-act="inappropriate" data-id="${lot.id}">🚩 不適切</button>
         <button class="act-edit" data-act="edit" data-id="${lot.id}">✏️ 編集</button>
       </div>
@@ -1271,7 +1273,9 @@ document.addEventListener('click', (e) => {
     const act = actBtn.dataset.act;
     if (act === 'confirm') vote(id, 'confirm');
     else if (act === 'report') vote(id, 'report');
-    else if (act === 'inappropriate') {
+    else if (act === 'closed') {
+      if (confirm('この場所は「なくなった・閉鎖した」と報告します。複数の報告が集まると地図から自動的に消えます。よろしいですか？')) vote(id, 'report', 'closed');
+    } else if (act === 'inappropriate') {
       if (confirm('この写真・投稿を「不適切」として通報します。よろしいですか？')) vote(id, 'report', 'inappropriate');
     } else if (act === 'edit') {
       if (!ensureLoggedIn()) return;
