@@ -183,7 +183,8 @@ let osmFetching = false;
 let osmPending = false;          // 取得中に画面が変わったら、あとで取り直す
 let osmCoverage = null;          // { bounds: 取得済みの広めの範囲, els }
 
-const OSM_MIN_ZOOM = 13; // これ以上ズームしたら地図上の駐車場(P)を表示
+const OSM_MIN_ZOOM = 13;   // これ以上ズームしたら地図上の駐車場(P)を表示（本アプリの主役）
+const SHOP_MIN_ZOOM = 16;  // 店(🏬)は「おまけ」なので、さらに拡大したときだけ表示（駐車場を主役に保つ）
 
 async function refreshOsmPins() {
   // ズームが浅すぎると数が多すぎるので、ある程度拡大したときだけ表示
@@ -269,7 +270,7 @@ let placesPending = false;
 let placesCoverage = null;
 
 async function refreshOsmPlaces() {
-  if (map.getZoom() < OSM_MIN_ZOOM) { osmPlacesLayer.clearLayers(); placesCoverage = null; return; }
+  if (map.getZoom() < SHOP_MIN_ZOOM) { osmPlacesLayer.clearLayers(); placesCoverage = null; return; }
   const view = map.getBounds();
   if (placesCoverage && placesCoverage.bounds.contains(view)) {
     renderOsmPlaces(placesCoverage.els);
@@ -1535,8 +1536,9 @@ $('#modal-close').addEventListener('click', closeForm);
 $('#btn-form-cancel').addEventListener('click', closeForm);
 $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeForm(); });
 
-// 地図を動かしたら、その範囲の駐車場を再取得（周辺表示の追従）
+// 地図を動かす／ズームするたびに、その範囲の駐車場を再取得（周辺表示の追従）
 map.on('moveend', scheduleReload);
+map.on('zoomend', scheduleReload);
 
 // ---- 起動 ----
 fetchMe(); // 自分の貢献ランクを取得してチップに反映
