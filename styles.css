@@ -256,6 +256,16 @@ button { font-family: inherit; cursor: pointer; }
 .act-approve:hover { background: #6d28d9; }
 .act-approve:disabled { opacity: .6; }
 
+/* 投票の内訳（適切/違う・古い/なくなった/不適切）＋最終日 */
+.vote-counts { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 6px 0; padding: 6px 8px; background: #f7f9fb; border-radius: 8px; }
+.vote-counts .vc { font-size: 11px; color: var(--ink); white-space: nowrap; }
+.vote-counts .vc b { font-size: 12px; }
+.vote-counts .vc i { color: var(--muted); font-style: normal; font-size: 10px; }
+.vote-counts .vc-ok b { color: var(--green); }
+.vote-counts .vc-warn b { color: var(--amber); }
+.vote-counts .vc-closed b { color: #8a5a00; }
+.vote-counts .vc-bad b { color: var(--red); }
+
 /* 審査（レビュー/承認）バッジとモーダル */
 .queue-badge { display: inline-block; min-width: 16px; padding: 0 4px; margin-left: 3px; border-radius: 9px; background: var(--red); color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
 .queue-card { max-width: 560px; width: 92vw; }

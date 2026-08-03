@@ -157,6 +157,9 @@ function decorate_lot(array $lot, float $hours): array
     }
     $lot['lat'] = (float)$lot['lat'];
     $lot['lng'] = (float)$lot['lng'];
+    // 投票の内訳（適切/違う・古い/閉鎖/不適切）をみんなに見えるよう付与
+    global $db;
+    $lot['counts'] = $db->reportBreakdown((int)$lot['id']);
     // 内部トークンは外に出さない
     unset($lot['created_by_token'], $lot['reviewer_token'], $lot['approver_token'], $lot['points_revoked']);
     return $lot;

@@ -406,9 +406,9 @@ function popupHtml(lot) {
         ${sample}
         ${noPhoto}
         ${dist ? `<span>🚶 ${dist}</span>` : ''}
-        ${lot.confirm_count ? `<span>✅ ${lot.confirm_count}</span>` : ''}
         ${lot.nickname ? `<span>by ${escapeHtml(lot.nickname)}</span>` : ''}
       </div>
+      ${voteCountsHtml(lot)}
       <div class="popup-actions">
         <button class="act-confirm" data-act="confirm" data-id="${lot.id}">✅ 情報は正しい</button>
         <button class="act-report" data-act="report" data-id="${lot.id}">⚠️ 違う/古い</button>
@@ -441,9 +441,9 @@ function shopPopupHtml(lot) {
         <span class="badge ${fresh.cls}">${fresh.label}</span>
         ${sample}
         ${dist ? `<span>🚶 ${dist}</span>` : ''}
-        ${lot.confirm_count ? `<span>✅ ${lot.confirm_count}</span>` : ''}
         ${lot.nickname ? `<span>by ${escapeHtml(lot.nickname)}</span>` : ''}
       </div>
+      ${voteCountsHtml(lot)}
       <div class="popup-proposals" data-id="${lot.id}"></div>
       <div class="popup-actions">
         <button class="act-confirm" data-act="confirm" data-id="${lot.id}">✅ 情報は正しい</button>
@@ -459,6 +459,19 @@ function fmtHours(h) {
   if (h < 1) return `${h * 60}分`;
   if (h === 24) return '1日';
   return `${h}時間`;
+}
+
+// 投票の内訳（みんなに見える）。件数＋「最後に押された日」を表示
+function voteCountsHtml(lot) {
+  const c = lot.counts || { confirm: lot.confirm_count || 0, wrong: 0, closed: 0, inappropriate: 0 };
+  const row = (cls, emoji, label, n, at) =>
+    `<span class="vc ${cls}">${emoji} ${label} <b>${n || 0}</b>${(n && at) ? ` <i>最終${fmtDate(at)}</i>` : ''}</span>`;
+  return `<div class="vote-counts">
+      ${row('vc-ok', '👍', '適切', c.confirm, c.confirm_at)}
+      ${row('vc-warn', '⚠️', '違う/古い', c.wrong, c.wrong_at)}
+      ${row('vc-closed', '🚧', 'なくなった', c.closed, c.closed_at)}
+      ${row('vc-bad', '🚩', '不適切', c.inappropriate, c.inappropriate_at)}
+    </div>`;
 }
 
 function unitLabel(m) {

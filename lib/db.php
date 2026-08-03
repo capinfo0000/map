@@ -777,6 +777,43 @@ class DB
         return (int)$this->pdo->query('SELECT COUNT(*) AS c FROM lots')->fetch()['c'];
     }
 
+    /**
+     * その投稿の投票内訳（1アカウント1票）。件数と「最後に押された日時」を返す。
+     * @return array 例: {confirm:29, confirm_at:'...', wrong:1, wrong_at:'...', closed:9, ..., inappropriate:4, ...}
+     */
+    public function reportBreakdown(int $lotId): array
+    {
+        $out = [
+            'confirm' => 0, 'confirm_at' => null,
+            'wrong' => 0, 'wrong_at' => null,
+            'closed' => 0, 'closed_at' => null,
+            'inappropriate' => 0, 'inappropriate_at' => null,
+        ];
+        $st = $this->pdo->prepare(
+            'SELECT kind, comment, COUNT(*) AS c, MAX(created_at) AS last
+             FROM reports WHERE lot_id = ? GROUP BY kind, comment'
+        );
+        $st->execute([$lotId]);
+        foreach ($st->fetchAll() as $r) {
+            $c = (int)$r['c'];
+            $last = $r['last'];
+            if ($r['kind'] === 'confirm') {
+                $key = 'confirm';
+            } elseif ($r['comment'] === 'inappropriate') {
+                $key = 'inappropriate';
+            } elseif ($r['comment'] === 'closed') {
+                $key = 'closed';
+            } else {
+                $key = 'wrong'; // 違う/古い（理由なしの一般報告）
+            }
+            $out[$key] += $c;
+            if ($last !== null && ($out[$key . '_at'] === null || $last > $out[$key . '_at'])) {
+                $out[$key . '_at'] = $last;
+            }
+        }
+        return $out;
+    }
+
     // ---- レート制限 ----
 
     /**
