@@ -411,7 +411,7 @@ function popupHtml(lot) {
       ${voteCountsHtml(lot)}
       <div class="popup-actions">
         <button class="act-confirm" data-act="confirm" data-id="${lot.id}">✅ 情報は正しい</button>
-        <button class="act-report" data-act="report" data-id="${lot.id}">⚠️ 違う/古い</button>
+        <button class="act-report" data-act="report" data-id="${lot.id}">⚠️ 古い（写真で更新）</button>
         <button class="act-report" data-act="closed" data-id="${lot.id}">🚧 なくなった</button>
         <button class="act-report" data-act="inappropriate" data-id="${lot.id}">🚩 不適切</button>
         <button class="act-edit" data-act="edit" data-id="${lot.id}">✏️ 編集</button>
@@ -447,7 +447,7 @@ function shopPopupHtml(lot) {
       <div class="popup-proposals" data-id="${lot.id}"></div>
       <div class="popup-actions">
         <button class="act-confirm" data-act="confirm" data-id="${lot.id}">✅ 情報は正しい</button>
-        <button class="act-report" data-act="report" data-id="${lot.id}">⚠️ 違う/古い</button>
+        <button class="act-report" data-act="report" data-id="${lot.id}">⚠️ 古い（写真で更新）</button>
         <button class="act-report" data-act="closed" data-id="${lot.id}">🚧 なくなった</button>
         <button class="act-report" data-act="inappropriate" data-id="${lot.id}">🚩 不適切</button>
         <button class="act-edit" data-act="edit" data-id="${lot.id}">✏️ 編集</button>
@@ -468,7 +468,7 @@ function voteCountsHtml(lot) {
     `<span class="vc ${cls}">${emoji} ${label} <b>${n || 0}</b>${(n && at) ? ` <i>最終${fmtDate(at)}</i>` : ''}</span>`;
   return `<div class="vote-counts">
       ${row('vc-ok', '👍', '適切', c.confirm, c.confirm_at)}
-      ${row('vc-warn', '⚠️', '違う/古い', c.wrong, c.wrong_at)}
+      ${row('vc-warn', '⚠️', '古い', c.wrong, c.wrong_at)}
       ${row('vc-closed', '🚧', 'なくなった', c.closed, c.closed_at)}
       ${row('vc-bad', '🚩', '不適切', c.inappropriate, c.inappropriate_at)}
     </div>`;
@@ -1285,7 +1285,13 @@ document.addEventListener('click', (e) => {
     const id = Number(actBtn.dataset.id);
     const act = actBtn.dataset.act;
     if (act === 'confirm') vote(id, 'confirm');
-    else if (act === 'report') vote(id, 'report');
+    else if (act === 'report') {
+      // 「古い」= 情報が古い印。押したら記録しつつ、その場で写真投稿(編集)画面を開いて更新をうながす
+      if (!ensureLoggedIn()) return;
+      const lot = state.lots.find((l) => l.id === id);
+      vote(id, 'report');
+      if (lot) { map.closePopup(); openForm(lot); }
+    }
     else if (act === 'closed') {
       if (confirm('この場所は「なくなった・閉鎖した」と報告します。複数の報告が集まると地図から自動的に消えます。よろしいですか？')) vote(id, 'report', 'closed');
     } else if (act === 'inappropriate') {

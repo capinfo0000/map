@@ -725,12 +725,7 @@ class DB
                 $this->pdo->prepare(
                     'UPDATE lots SET report_count = report_count + 1 WHERE id = ?'
                 )->execute([$lotId]);
-                // 自動非表示: 報告が既定数以上たまり、かつ確認数を上回ったら非表示（管理者不要・巻き添え防止）
-                $this->pdo->prepare(
-                    "UPDATE lots SET hidden = 1, hidden_at = ?
-                     WHERE id = ? AND hidden = 0
-                       AND report_count >= ? AND report_count > confirm_count"
-                )->execute([$now, $lotId, self::HIDE_MIN_REPORTS]);
+                // 「古い」は更新をうながす印なので自動非表示にはしない（消すのは「閉鎖」「不適切」だけ）。
                 // 不適切通報は少数でも即非表示（ログイン必須で通報が信頼できるため）
                 if ($comment === 'inappropriate') {
                     $ic = $this->pdo->prepare(
