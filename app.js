@@ -1433,9 +1433,8 @@ map.on('moveend', scheduleReload);
 // ---- 起動 ----
 fetchMe(); // 自分の貢献ランクを取得してチップに反映
 refreshQueueCounts(); // 審査待ち件数をボタンのバッジに反映
-// まず現在地の取得を試み、その付近の駐車場を「近い順」で初期表示する。
-// 位置が取れなければ既定表示（東京駅周辺）のまま概算順で表示。
-(async () => {
-  const ok = await locate({ initial: true });
-  if (!ok) loadLots();
-})();
+// 初回ロードを速く: 現在地の許可・測位を待たず、まず既定表示のデータを即描画する。
+// （以前は locate() の完了まで最大12秒 何も表示されなかった＝初回が遅い原因）
+loadLots();
+// 続けて現在地へ寄せ、取得できたらその周辺を「近い順」で表示（locate 内で loadLots が走る）。
+locate({ initial: true });
