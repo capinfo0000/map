@@ -968,9 +968,21 @@ function applyUserPos(pos, options, recenter) {
     radius: Math.min(accuracy || 50, 500), color: '#1573ff', weight: 1,
     fillColor: '#1573ff', fillOpacity: 0.12,
   }).addTo(map);
-  userMarker = L.circleMarker([lat, lng], {
-    radius: 8, color: '#fff', weight: 2, fillColor: '#1573ff', fillOpacity: 1,
-  }).addTo(map).bindPopup(`現在地（誤差 約${Math.round(accuracy || 0)}m）`);
+  // 現在地マーカー（ドラッグで微調整可能）。GPS/Wi-Fi測位のズレを手で直せる。
+  const dot = L.divIcon({
+    className: '', html: '<div class="user-dot"></div>',
+    iconSize: [18, 18], iconAnchor: [9, 9],
+  });
+  userMarker = L.marker([lat, lng], { icon: dot, draggable: true, zIndexOffset: 1000, autoPan: false })
+    .addTo(map)
+    .bindPopup(`現在地（誤差 約${Math.round(accuracy || 0)}m）<br>ズレていたら<b>ドラッグで調整</b>できます`);
+  userMarker.on('dragend', () => {
+    const p = userMarker.getLatLng();
+    state.userPos = { lat: p.lat, lng: p.lng };
+    if (accuracyCircle) accuracyCircle.setLatLng(p);
+    loadLots(); // 近い順・距離を新しい位置で再計算
+    toast('現在地を調整しました');
+  });
   if (options.initial && recenter) {
     state.sort = 'distance';
     setActiveSortButton('distance');

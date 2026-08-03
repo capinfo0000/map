@@ -95,6 +95,10 @@ button { font-family: inherit; cursor: pointer; }
 .layout { flex: 1; display: flex; min-height: 0; position: relative; }
 #map { flex: 1; min-height: 0; z-index: 1; }
 
+/* 現在地マーカー（ドラッグで微調整可） */
+.user-dot { width: 18px; height: 18px; border-radius: 50%; background: #1573ff; border: 3px solid #fff; box-shadow: 0 0 0 1px rgba(21,115,255,.5), 0 1px 4px rgba(0,0,0,.4); cursor: grab; }
+.leaflet-marker-draggable .user-dot { cursor: grab; }
+
 /* 店名・住所検索（地図の上に浮かせる） */
 .search-box { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 600; width: min(92%, 420px); }
 .search-row { display: flex; gap: 6px; background: #fff; border-radius: 999px; box-shadow: var(--shadow); padding: 4px 4px 4px 14px; }
