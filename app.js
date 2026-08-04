@@ -166,8 +166,9 @@ async function loadLots() {
 
   renderMarkers();
   renderList();
-  refreshOsmPins();   // 地図上の「P」(OSMの駐車場)をグレーピンで表示
-  refreshOsmPlaces(); // 地図上の「🏬」(OSMの飲食店・コンビニ等)をグレーピンで表示
+  refreshOsmPins();   // 地図上の「P」(OSMの駐車場)をグレーピンで表示（主役）
+  // ※飲食店等のOSM POIは「駐車場があるから載せる」対象なので、駐車場の有無が分からない
+  //   一般POIの自動表示はしない。店は「駐車場がある」と人が判断して登録したもの(赤🏬)だけ表示。
 }
 
 // 地図移動で周辺を再取得（デバウンス）
