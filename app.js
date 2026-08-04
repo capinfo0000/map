@@ -19,6 +19,7 @@ const state = {
   loggedIn: false, // ログイン状態（識別はサーバーのセッション）
   username: null,
   queueTab: 'new', // 審査モーダルの現在タブ（new=新規公開待ち / edit=編集承認待ち）
+  showShops: (function () { try { return localStorage.getItem('showShops') === '1'; } catch (e) { return false; } })(), // 店の表示（既定OFF）
 };
 
 // ---- 地図初期化 ----
@@ -374,6 +375,8 @@ function renderMarkers() {
   state.markers.forEach((m) => map.removeLayer(m));
   state.markers.clear();
   state.lots.forEach((lot) => {
+    // 店（🏬）は「店を表示」ONのときだけ地図に出す（既定OFF＝駐車場だけ）
+    if (lot.kind === 'shop' && !state.showShops) return;
     const marker = L.marker([lot.lat, lot.lng], { icon: makePinIcon(lot) }).addTo(map);
     marker.on('click', () => marker.setPopupContent(popupHtml(lot)));
     marker.bindPopup(popupHtml(lot), { minWidth: 220, maxWidth: 260 });
@@ -779,7 +782,7 @@ function renderSearchResults(mine, places) {
   if (mine.length) {
     html += '<div class="sr-group">登録済みの場所</div>';
     html += mine.map((m) => `
-      <div class="sr-item" data-lat="${m.lat}" data-lng="${m.lng}" data-id="${m.id}">
+      <div class="sr-item" data-lat="${m.lat}" data-lng="${m.lng}" data-id="${m.id}" data-kind="${m.kind}">
         <span class="sr-icon">${m.kind === 'shop' ? '🏬' : '🅿️'}</span>
         <div class="sr-body">
           <div class="sr-name">${escapeHtml(m.name)}</div>
@@ -1448,6 +1451,15 @@ $('#btn-add-shop').addEventListener('click', () => { if (ensureLoggedIn()) start
 $('#btn-queue').addEventListener('click', openQueue);
 $('#queue-close').addEventListener('click', closeQueue);
 
+// 店を表示する/しない（既定OFF・選択は記憶）
+$('#chk-shops').checked = state.showShops;
+$('#chk-shops').addEventListener('change', (e) => {
+  state.showShops = e.target.checked;
+  try { localStorage.setItem('showShops', state.showShops ? '1' : '0'); } catch (err) {}
+  renderMarkers(); // 再取得せず表示だけ切り替え
+  toast(state.showShops ? '🏬 お店を表示します' : '🏬 お店を非表示にしました');
+});
+
 // 検索
 $('#search-form').addEventListener('submit', (e) => { e.preventDefault(); runSearch($('#search-input').value); });
 $('#search-results').addEventListener('click', async (e) => {
@@ -1457,6 +1469,12 @@ $('#search-results').addEventListener('click', async (e) => {
   const id = item.dataset.id ? Number(item.dataset.id) : null;
   $('#search-results').classList.add('hidden');
   if (!isFinite(lat) || !isFinite(lng)) return;
+  // 店を検索して選んだのに「店を表示」OFFだと出ないので、その時はONにする
+  if (item.dataset.kind === 'shop' && !state.showShops) {
+    state.showShops = true;
+    $('#chk-shops').checked = true;
+    try { localStorage.setItem('showShops', '1'); } catch (err) {}
+  }
   map.setView([lat, lng], 17);
   await loadLots();
   if (id) { const m = state.markers.get(id); if (m) m.openPopup(); }

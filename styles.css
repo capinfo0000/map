@@ -41,6 +41,9 @@ button { font-family: inherit; cursor: pointer; }
   padding: 9px 16px; font-size: 14px; font-weight: 600; box-shadow: var(--shadow);
 }
 .primary-btn:hover { background: var(--brand-dark); }
+/* 店を表示する/しない チェックボックス */
+.chk-shops { display: inline-flex; align-items: center; gap: 5px; background: #eef1f5; color: var(--ink); border-radius: 999px; padding: 7px 12px; font-size: 13px; font-weight: 600; cursor: pointer; user-select: none; }
+.chk-shops input { width: 16px; height: 16px; accent-color: #7c3aed; margin: 0; cursor: pointer; }
 .primary-btn--shop { background: #7c3aed; }
 .primary-btn--shop:hover { background: #6d28d9; }
 .ghost-btn {
