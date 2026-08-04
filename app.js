@@ -257,6 +257,7 @@ function osmPopupHtml(o) {
   return `<div class="popup">
       <p class="popup-name">${nm}</p>
       <p class="popup-note">🅿️ 地図上の駐車場です。まだ料金情報がありません。</p>
+      <a class="popup-go" href="${gmapUrl(o.lat, o.lng)}" target="_blank" rel="noopener">🚗 ここへ行く（Googleマップで経路案内）</a>
       <div class="popup-actions">
         <button class="act-osmreg" data-lat="${o.lat}" data-lng="${o.lng}" data-name="${nm}">＋ 料金・写真を登録</button>
       </div>
@@ -323,6 +324,7 @@ function osmPlacePopupHtml(o) {
       ${cat ? `<p class="popup-note">🏷️ ${cat}</p>` : ''}
       ${o.hours ? `<p class="popup-note">🕒 ${escapeHtml(o.hours)}</p>` : ''}
       <p class="popup-note">地図上の店です。営業時間などを登録できます。</p>
+      <a class="popup-go" href="${gmapUrl(o.lat, o.lng)}" target="_blank" rel="noopener">🚗 ここへ行く（Googleマップで経路案内）</a>
       <div class="popup-actions">
         <button class="act-placereg" data-lat="${o.lat}" data-lng="${o.lng}"
           data-name="${nm}" data-hours="${escapeHtml(o.hours || '')}" data-category="${cat}">＋ この店を登録</button>
@@ -409,6 +411,7 @@ function popupHtml(lot) {
         ${dist ? `<span>🚶 ${dist}</span>` : ''}
         ${lot.nickname ? `<span>by ${escapeHtml(lot.nickname)}</span>` : ''}
       </div>
+      ${gmapGoHtml(lot)}
       ${voteCountsHtml(lot)}
       <div class="popup-actions">
         <button class="act-confirm" data-act="confirm" data-id="${lot.id}">✅ 情報は正しい</button>
@@ -444,6 +447,7 @@ function shopPopupHtml(lot) {
         ${dist ? `<span>🚶 ${dist}</span>` : ''}
         ${lot.nickname ? `<span>by ${escapeHtml(lot.nickname)}</span>` : ''}
       </div>
+      ${gmapGoHtml(lot)}
       ${voteCountsHtml(lot)}
       <div class="popup-proposals" data-id="${lot.id}"></div>
       <div class="popup-actions">
@@ -460,6 +464,15 @@ function fmtHours(h) {
   if (h < 1) return `${h * 60}分`;
   if (h === 24) return '1日';
   return `${h}時間`;
+}
+
+// Googleマップの経路案内URL（現在地→この地点）。スマホならGoogleマップアプリが開く
+function gmapUrl(lat, lng, name) {
+  const dest = `${(+lat).toFixed(6)},${(+lng).toFixed(6)}`;
+  return 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(dest);
+}
+function gmapGoHtml(lot) {
+  return `<a class="popup-go" href="${gmapUrl(lot.lat, lot.lng, lot.name)}" target="_blank" rel="noopener">🚗 ここへ行く（Googleマップで経路案内）</a>`;
 }
 
 // 投票の内訳（みんなに見える）。件数＋「最後に押された日」を表示

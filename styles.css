@@ -275,6 +275,10 @@ button { font-family: inherit; cursor: pointer; }
 .act-approve:hover { background: #6d28d9; }
 .act-approve:disabled { opacity: .6; }
 
+/* 「ここへ行く」＝Googleマップ経路案内ボタン */
+.popup-go { display: block; text-align: center; margin: 8px 0 2px; padding: 9px 12px; background: #1a73e8; color: #fff !important; border-radius: 8px; font-size: 13px; font-weight: 700; text-decoration: none; }
+.popup-go:hover { background: #1666c9; }
+
 /* 投票の内訳（適切/違う・古い/なくなった/不適切）＋最終日 */
 .vote-counts { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 6px 0; padding: 6px 8px; background: #f7f9fb; border-radius: 8px; }
 .vote-counts .vc { font-size: 11px; color: var(--ink); white-space: nowrap; }
