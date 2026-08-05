@@ -183,22 +183,43 @@ function scheduleReload() {
 const osmLayer = L.layerGroup().addTo(map);
 let osmFetching = false;
 let osmPending = false;          // 取得中に画面が変わったら、あとで取り直す
-let osmCoverage = null;          // { bounds: 取得済みの広めの範囲, els }
 
 const OSM_MIN_ZOOM = 13;   // これ以上ズームしたら地図上の駐車場(P)を表示（本アプリの主役）
 const SHOP_MIN_ZOOM = 16;  // 店(🏬)は「おまけ」なので、さらに拡大したときだけ表示（駐車場を主役に保つ）
+const OSM_CACHE_TTL_MS = 24 * 3600 * 1000; // クライアント側キャッシュの鮮度（1日）
+const OSM_CACHE_MAX = 8;                    // 直近この数のエリアをブラウザに保存（複数の場所を即表示）
+
+// ブラウザ(localStorage)に取得済みエリアを複数保存 → ページを開き直しても、行った場所は即表示
+function loadOsmCacheList() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('osmCacheV2') || '[]');
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((c) => c && Array.isArray(c.els))
+      .map((c) => ({ bounds: L.latLngBounds([[c.s, c.w], [c.n, c.e]]), els: c.els, ts: c.ts || 0 }));
+  } catch (e) { return []; }
+}
+function persistOsmCacheList() {
+  try {
+    const raw = osmCacheList.map((c) => ({
+      s: c.bounds.getSouth(), w: c.bounds.getWest(), n: c.bounds.getNorth(), e: c.bounds.getEast(),
+      els: c.els, ts: c.ts,
+    }));
+    localStorage.setItem('osmCacheV2', JSON.stringify(raw));
+  } catch (e) { /* 保存不可でも動作に支障なし */ }
+}
+let osmCacheList = loadOsmCacheList(); // 起動時に前回までのキャッシュを復元（セッションをまたいで速い）
 
 async function refreshOsmPins() {
   // ズームが浅すぎると数が多すぎるので、ある程度拡大したときだけ表示
-  if (map.getZoom() < OSM_MIN_ZOOM) { osmLayer.clearLayers(); osmCoverage = null; return; }
+  if (map.getZoom() < OSM_MIN_ZOOM) { osmLayer.clearLayers(); return; }
   const view = map.getBounds();
 
-  // 直近に取得した「広めの範囲」に収まっていれば、取得せず即描画（体感を高速に）
-  if (osmCoverage && osmCoverage.bounds.contains(view)) {
-    renderOsmPins(osmCoverage.els);
-    return;
+  // 保存済みエリアのどれかに収まっていれば即描画（前回セッションのキャッシュも含む）
+  const hit = osmCacheList.find((c) => c.bounds.contains(view));
+  if (hit) {
+    renderOsmPins(hit.els);
+    if (Date.now() - hit.ts <= OSM_CACHE_TTL_MS) return; // 新しければ即終了。古ければ裏で更新
   }
-  // すでに取得中なら、あとで最新ビューを取り直す（取りこぼし防止）
   if (osmFetching) { osmPending = true; return; }
 
   osmFetching = true;
@@ -206,8 +227,17 @@ async function refreshOsmPins() {
   try {
     const padded = view.pad(0.3); // 画面より少し広めに取得 → 小さな移動は再取得不要
     const els = await fetchOverpassParking(padded);
-    osmCoverage = { bounds: padded, els };
-    renderOsmPins(els);
+    if (els.length) {
+      // 最新を先頭に積み、直近 OSM_CACHE_MAX 件だけ保持（別エリアのキャッシュを潰さない）
+      osmCacheList.unshift({ bounds: padded, els, ts: Date.now() });
+      osmCacheList = osmCacheList.slice(0, OSM_CACHE_MAX);
+      persistOsmCacheList();
+      renderOsmPins(els);
+    } else if (!hit) {
+      // 取得0件（＝本当に無い or 一時的な取得失敗）で、キャッシュも無いときだけ空表示。
+      // キャッシュがある場合は既存表示を維持（取得失敗でピンを消さない）。
+      renderOsmPins([]);
+    }
   } catch (e) { /* 失敗は無視（手動で再操作すれば再取得） */ }
   finally {
     osmFetching = false;
@@ -1559,7 +1589,8 @@ async function postJson(path, body) {
 
 // この地図を更新: 表示範囲のDB＋OSMのPを取り直す
 function forceRefresh() {
-  osmCoverage = null; // OSMキャッシュを無効化して確実に再取得
+  osmCacheList = []; // クライアント側キャッシュを無効化して確実に再取得
+  try { localStorage.removeItem('osmCacheV2'); } catch (e) {}
   toast('この地図を更新しています…');
   loadLots();
 }
