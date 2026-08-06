@@ -29,11 +29,12 @@ body {
 /* ---- top bar ---- */
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 12px; padding: 10px 14px; background: var(--panel);
+  gap: 10px; padding: 10px 14px; background: var(--panel);
   border-bottom: 1px solid var(--line); box-shadow: var(--shadow); z-index: 500;
+  flex-wrap: wrap; row-gap: 8px;
 }
 .brand { font-size: 17px; margin: 0; white-space: nowrap; }
-.topbar-actions { display: flex; gap: 8px; }
+.topbar-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 
 button { font-family: inherit; cursor: pointer; }
 .primary-btn {
@@ -332,6 +333,12 @@ button { font-family: inherit; cursor: pointer; }
   .layout { flex-direction: column; }
   .list-panel { width: auto; border-left: none; border-top: 1px solid var(--line); max-height: 42vh; }
   #map { min-height: 40vh; }
-  .brand { font-size: 15px; }
   .controls { gap: 10px; }
+  /* ヘッダーを省スペースに: ボタンは絵文字中心、長い文言は隠す */
+  .topbar { padding: 8px 10px; gap: 8px; }
+  .brand { font-size: 15px; }
+  .topbar-actions { gap: 6px; }
+  .btn-txt { display: none; }
+  .icon-btn, .primary-btn, .chk-shops { padding: 8px 11px; font-size: 13px; }
+  .rank-chip { padding: 6px 9px; font-size: 12px; }
 }

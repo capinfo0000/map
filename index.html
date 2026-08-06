@@ -7,24 +7,24 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🅿️</text></svg>" />
   <meta name="description" content="みんなで作る駐車場マップ。周辺の駐車場と料金を地図で探して、最安値を見つけよう。" />
   <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
-  <link rel="stylesheet" href="styles.css?v=20260803n" />
+  <link rel="stylesheet" href="styles.css?v=20260803o" />
 </head>
 <body>
   <div id="app">
     <header class="topbar">
       <h1 class="brand">🅿️ みんなの駐車場マップ</h1>
       <div class="topbar-actions">
-        <button id="rank-chip" class="rank-chip hidden" title="あなたの貢献ランク">🥉 ブロンズ<span class="rank-pts">0pt</span></button>
-        <button id="btn-login" class="icon-btn">ログイン / 登録</button>
-        <button id="btn-logout" class="icon-btn hidden" title="ログアウト">ログアウト</button>
-        <button id="btn-queue" class="icon-btn" title="レビュー・承認して公開を手伝う">📋 審査<span id="queue-badge" class="queue-badge hidden">0</span></button>
-        <button id="btn-refresh" class="icon-btn" title="この地図を更新">🔄 更新</button>
-        <button id="btn-locate" class="icon-btn" title="現在地へ">📍 現在地</button>
+        <button id="rank-chip" class="rank-chip hidden" title="あなたの貢献ランク">🥉<span class="btn-txt"> ブロンズ</span><span class="rank-pts">0pt</span></button>
+        <button id="btn-login" class="icon-btn" title="ログイン / 登録">👤<span class="btn-txt"> ログイン / 登録</span></button>
+        <button id="btn-logout" class="icon-btn hidden" title="ログアウト">🚪<span class="btn-txt"> ログアウト</span></button>
+        <button id="btn-queue" class="icon-btn" title="レビュー・承認して公開を手伝う">📋<span class="btn-txt"> 審査</span><span id="queue-badge" class="queue-badge hidden">0</span></button>
+        <button id="btn-refresh" class="icon-btn" title="この地図を更新">🔄<span class="btn-txt"> 更新</span></button>
+        <button id="btn-locate" class="icon-btn" title="現在地へ">📍<span class="btn-txt"> 現在地</span></button>
         <label id="chk-shops-label" class="chk-shops" title="お店のピンを地図に表示する">
-          <input type="checkbox" id="chk-shops" /> 🏬 店を表示
+          <input type="checkbox" id="chk-shops" /> 🏬<span class="btn-txt"> 店を表示</span>
         </label>
-        <button id="btn-add" class="primary-btn">🅿️ 駐車場を登録</button>
-        <button id="btn-add-shop" class="primary-btn primary-btn--shop">🏬 店を登録</button>
+        <button id="btn-add" class="primary-btn">🅿️ <span class="btn-txt">駐車場を</span>登録</button>
+        <button id="btn-add-shop" class="primary-btn primary-btn--shop">🏬 <span class="btn-txt">店を</span>登録</button>
       </div>
     </header>
 
@@ -218,6 +218,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/vendor/leaflet/leaflet.js"></script>
-  <script src="app.js?v=20260803n"></script>
+  <script src="app.js?v=20260803o"></script>
 </body>
 </html>
