@@ -779,13 +779,14 @@ class DB
         // LIKE のワイルドカードをエスケープ（部分一致検索）
         $esc = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q);
         $like = '%' . $esc . '%';
+        // MySQL(エミュレーションOFF)では同名プレースホルダを複数使えないため別名にする
         $st = $this->pdo->prepare(
             "SELECT id, kind, name, address, lat, lng FROM lots
              WHERE hidden = 0 AND status = 'published'
-               AND (name LIKE :q ESCAPE '\\' OR address LIKE :q ESCAPE '\\')
+               AND (name LIKE :q1 ESCAPE '\\' OR address LIKE :q2 ESCAPE '\\')
              ORDER BY id DESC LIMIT $limit"
         );
-        $st->execute([':q' => $like]);
+        $st->execute([':q1' => $like, ':q2' => $like]);
         return $st->fetchAll();
     }
 
