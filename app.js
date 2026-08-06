@@ -23,7 +23,9 @@ const state = {
 };
 
 // ---- 地図初期化 ----
-const map = L.map('map', { zoomControl: true }).setView([35.681236, 139.767125], 15); // 東京駅付近を初期表示
+const map = L.map('map', { zoomControl: false }).setView([35.681236, 139.767125], 15); // 東京駅付近を初期表示
+// ズームボタンは左下へ（上部の検索バー・右下の操作ボタンと重ならないように）
+L.control.zoom({ position: 'bottomleft' }).addTo(map);
 // 「Leaflet」表記は任意なので消す（© OpenStreetMap はライセンス上必須のため残す）
 map.attributionControl.setPrefix(false);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -733,6 +735,9 @@ function updateQueueCounts(counts) {
   const ee = $('#qc-edit'); if (ee) ee.textContent = ed;
   const badge = $('#queue-badge');
   if (badge) { badge.textContent = n + ed; badge.classList.toggle('hidden', (n + ed) === 0); }
+  // 審査待ちがあればメニュー(三本線)に赤ドットで気づけるように
+  const alert = $('#menu-alert');
+  if (alert) alert.classList.toggle('hidden', (n + ed) === 0);
 }
 async function refreshQueueCounts() {
   try {
@@ -1480,6 +1485,15 @@ $('#btn-add').addEventListener('click', () => { if (ensureLoggedIn()) startAddMo
 $('#btn-add-shop').addEventListener('click', () => { if (ensureLoggedIn()) startAddMode('shop'); });
 $('#btn-queue').addEventListener('click', openQueue);
 $('#queue-close').addEventListener('click', closeQueue);
+
+// 三本線メニュー（必要な時だけ開く）
+$('#btn-menu').addEventListener('click', () => $('#menu').classList.remove('hidden'));
+$('#menu-close').addEventListener('click', () => $('#menu').classList.add('hidden'));
+$('#menu').addEventListener('click', (e) => {
+  if (e.target.id === 'menu') { $('#menu').classList.add('hidden'); return; }
+  if (e.target.closest('.menu-toggle')) return; // 店表示トグルは開いたまま
+  if (e.target.closest('.menu-item') || e.target.closest('#rank-chip')) $('#menu').classList.add('hidden');
+});
 
 // 店を表示する/しない（既定OFF・選択は記憶）
 $('#chk-shops').checked = state.showShops;

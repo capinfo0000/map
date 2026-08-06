@@ -103,11 +103,34 @@ button { font-family: inherit; cursor: pointer; }
 .user-dot { width: 18px; height: 18px; border-radius: 50%; background: #1573ff; border: 3px solid #fff; box-shadow: 0 0 0 1px rgba(21,115,255,.5), 0 1px 4px rgba(0,0,0,.4); cursor: grab; }
 .leaflet-marker-draggable .user-dot { cursor: grab; }
 
-/* 店名・住所検索（地図の上に浮かせる） */
-.search-box { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 600; width: min(92%, 420px); }
-.search-row { display: flex; gap: 6px; background: #fff; border-radius: 999px; box-shadow: var(--shadow); padding: 4px 4px 4px 14px; }
-.search-row input { flex: 1; border: none; outline: none; font-size: 14px; background: transparent; }
+/* 店名・住所検索＋三本線メニュー（地図の上に浮かせる） */
+.search-box { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 600; width: min(94%, 460px); }
+.search-row { display: flex; align-items: center; gap: 4px; background: #fff; border-radius: 999px; box-shadow: var(--shadow); padding: 4px 6px; }
+.menu-btn { position: relative; border: none; background: transparent; width: 38px; height: 38px; border-radius: 50%; font-size: 20px; cursor: pointer; color: var(--ink); flex-shrink: 0; }
+.menu-btn:hover { background: #eef1f5; }
+.menu-alert { position: absolute; top: 7px; right: 7px; width: 9px; height: 9px; border-radius: 50%; background: var(--red); border: 1px solid #fff; }
+.search-form { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; }
+.search-form input { flex: 1; border: none; outline: none; font-size: 14px; background: transparent; min-width: 0; padding-left: 4px; }
 .search-btn { border: none; background: var(--brand); color: #fff; border-radius: 999px; width: 38px; height: 38px; font-size: 16px; cursor: pointer; flex-shrink: 0; }
+
+/* 右下フローティング操作ボタン（Googleマップ風） */
+.fabs { position: absolute; right: 14px; bottom: 22px; z-index: 600; display: flex; flex-direction: column; gap: 12px; align-items: center; }
+.fab { width: 48px; height: 48px; border-radius: 50%; border: none; background: #fff; color: var(--ink); box-shadow: 0 2px 8px rgba(0,0,0,.28); font-size: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.fab:hover { background: #f3f4f6; }
+.fab-primary { width: 58px; height: 58px; background: var(--brand); color: #fff; font-size: 20px; box-shadow: 0 3px 10px rgba(21,115,255,.5); }
+.fab-primary b { font-weight: 800; margin-left: -2px; }
+.fab-primary:hover { background: var(--brand-dark); }
+
+/* 三本線メニュー（左からスライド） */
+.menu { position: fixed; inset: 0; background: rgba(20,28,40,.45); z-index: 2500; display: flex; }
+.menu-panel { background: var(--panel); width: min(86%, 330px); height: 100%; padding: 14px; overflow-y: auto; box-shadow: 2px 0 20px rgba(0,0,0,.25); display: flex; flex-direction: column; gap: 8px; animation: menuSlide .18s ease; }
+@keyframes menuSlide { from { transform: translateX(-100%); } to { transform: none; } }
+.menu-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.menu-head .brand { font-size: 16px; }
+.menu-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; background: #f6f7f9; border: none; border-radius: 10px; padding: 13px 14px; font-size: 15px; font-weight: 600; color: var(--ink); text-decoration: none; cursor: pointer; }
+.menu-item:hover { background: #eef1f5; }
+.menu-toggle input { width: 20px; height: 20px; accent-color: #7c3aed; }
+.menu .rank-chip { justify-content: center; }
 .search-results { margin-top: 6px; background: #fff; border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; max-height: 60vh; overflow-y: auto; }
 .sr-group { font-size: 11px; color: var(--muted); padding: 8px 12px 4px; font-weight: 700; }
 .sr-item { display: flex; gap: 8px; align-items: flex-start; padding: 9px 12px; cursor: pointer; border-top: 1px solid var(--line); }
