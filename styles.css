@@ -334,11 +334,10 @@ button { font-family: inherit; cursor: pointer; }
   .list-panel { width: auto; border-left: none; border-top: 1px solid var(--line); max-height: 42vh; }
   #map { min-height: 40vh; }
   .controls { gap: 10px; }
-  /* ヘッダーを省スペースに: ボタンは絵文字中心、長い文言は隠す */
+  /* モバイルでも文言は表示（分かりやすさ優先）。折り返し＋少し詰めて対応 */
   .topbar { padding: 8px 10px; gap: 8px; }
   .brand { font-size: 15px; }
   .topbar-actions { gap: 6px; }
-  .btn-txt { display: none; }
   .icon-btn, .primary-btn, .chk-shops { padding: 8px 11px; font-size: 13px; }
   .rank-chip { padding: 6px 9px; font-size: 12px; }
 }
