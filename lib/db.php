@@ -776,14 +776,13 @@ class DB
     public function searchLots(string $q, int $limit = 20): array
     {
         $limit = max(1, min(50, $limit));
-        // LIKE のワイルドカードをエスケープ（部分一致検索）
-        $esc = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q);
-        $like = '%' . $esc . '%';
+        // ワイルドカード文字は普通の文字として扱う（ESCAPE句はMySQL/SQLiteで挙動が違うため使わない）
+        $like = '%' . str_replace(['%', '_'], ['', ''], $q) . '%';
         // MySQL(エミュレーションOFF)では同名プレースホルダを複数使えないため別名にする
         $st = $this->pdo->prepare(
             "SELECT id, kind, name, address, lat, lng FROM lots
              WHERE hidden = 0 AND status = 'published'
-               AND (name LIKE :q1 ESCAPE '\\' OR address LIKE :q2 ESCAPE '\\')
+               AND (name LIKE :q1 OR address LIKE :q2)
              ORDER BY id DESC LIMIT $limit"
         );
         $st->execute([':q1' => $like, ':q2' => $like]);
